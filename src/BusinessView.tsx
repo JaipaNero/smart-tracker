@@ -217,10 +217,7 @@ export default function BusinessView({ user, baseCurrency }: { user: User, baseC
 
   return (
     <div className="space-y-6 pb-24">
-      {/* TEST BANNER - IF YOU SEE THIS, WE ARE SYNCED */}
-      <div className="bg-red-600 text-white text-center py-4 font-black text-xl uppercase tracking-widest animate-pulse">
-        LATEST VERSION DEPLOYED - 22:16
-      </div>
+
       {/* Header Area */}
       <div className="flex justify-between items-center px-2">
         <div>
@@ -670,12 +667,7 @@ export default function BusinessView({ user, baseCurrency }: { user: User, baseC
           </div>
         )}
       </AnimatePresence>
-      {/* Debug Info (Temporary) */}
-      <div className="mt-10 pb-20 text-center opacity-30">
-        <p className="text-[8px] text-white font-mono">
-          UID: {user.uid} | Connected: {isGmailConnected ? 'YES' : 'NO'} | Pending: {pendingApprovals.length}
-        </p>
-      </div>
+
     </div>
   );
 }
