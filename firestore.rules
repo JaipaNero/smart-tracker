@@ -1,0 +1,248 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // Pillar 2: Validation Blueprints (The "Anti-Update-Gap")
+    function isValidTimestamp(val) {
+      return val is string && val.size() >= 10 && val.size() <= 40;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['displayName', 'baseCurrency', 'spendingCap', 'createdAt']) &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             data.baseCurrency is string && data.baseCurrency.size() <= 3 &&
+             data.spendingCap is number &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidBudget(data) {
+      return data.keys().hasAll(['category', 'amount', 'createdAt']) &&
+             data.category is string && data.category.size() <= 50 &&
+             data.amount is number &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['date', 'amount', 'category', 'description', 'currency', 'isRecurring', 'hasItems', 'createdAt']) &&
+             data.date is string && data.date.size() <= 64 &&
+             data.amount is number &&
+             data.category is string && data.category.size() <= 64 &&
+             data.description is string && data.description.size() <= 256 &&
+             data.currency is string && data.currency.size() <= 10 &&
+             data.isRecurring is bool &&
+             data.hasItems is bool &&
+             isValidTimestamp(data.createdAt) &&
+             (!('rawTotal' in data) || data.rawTotal is number) &&
+             (!('splitRatio' in data) || data.splitRatio is number) &&
+             (!('computedCost' in data) || data.computedCost is number);
+    }
+
+    function isValidPriceHistory(data) {
+      return data.keys().hasAll(['expenseId', 'itemName', 'merchant', 'date', 'unitPrice', 'totalPrice', 'quantity', 'currency', 'createdAt']) &&
+             data.expenseId is string && data.expenseId.size() <= 128 &&
+             data.itemName is string && data.itemName.size() <= 200 &&
+             data.merchant is string && data.merchant.size() <= 200 &&
+             data.date is string && data.date.size() <= 40 &&
+             data.unitPrice is number &&
+             data.totalPrice is number &&
+             data.quantity is number &&
+             data.currency is string && data.currency.size() <= 10 &&
+             (!('discount' in data) || data.discount is number) &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidBaseItem(data) {
+      return data.keys().hasAll(['name', 'purchaseDate', 'burnRateDays', 'quantity', 'remainingPercentage', 'ownerId', 'splitRatio']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.purchaseDate is string && data.purchaseDate.size() <= 64 &&
+             data.burnRateDays is number &&
+             data.quantity is number &&
+             data.remainingPercentage is number &&
+             data.ownerId is string &&
+             data.splitRatio is number &&
+             (!('itemType' in data) || data.itemType in ['food', 'supply', 'asset', 'service']) &&
+             (!('sharedWithHouseholdId' in data) || (data.sharedWithHouseholdId == null || data.sharedWithHouseholdId is string)) &&
+             (!('allowedUsers' in data) || data.allowedUsers is list) &&
+             (!('genericName' in data) || data.genericName is string) &&
+             (!('aisle' in data) || data.aisle is string) &&
+             (!('targetPrice' in data) || data.targetPrice is number) &&
+             (!('agentStatus' in data) || data.agentStatus in ['idle', 'searching', 'found', 'completed']);
+    }
+
+    function isValidPantryItem(data) {
+      return isValidBaseItem(data) &&
+             (data.itemType == 'food' ? ('nutritionTag' in data && data.nutritionTag is string) : true) &&
+             (data.itemType == 'asset' ? ('warrantyMonths' in data && data.warrantyMonths is number) : true) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt));
+    }
+
+    function isValidShoppingListItem(data) {
+      return data.keys().hasAll(['name', 'addedAt', 'createdAt']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.addedAt is string && data.addedAt.size() <= 64 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidAsset(data) {
+      return data.keys().hasAll(['name', 'purchaseDate', 'merchant', 'price', 'createdAt']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.purchaseDate is string && data.purchaseDate.size() <= 64 &&
+             data.merchant is string && data.merchant.size() <= 200 &&
+             data.price is number &&
+             isValidTimestamp(data.createdAt) &&
+             (!('warrantyMonths' in data) || data.warrantyMonths is number) &&
+             (!('warrantyExpiryDate' in data) || (data.warrantyExpiryDate is string && data.warrantyExpiryDate.size() <= 64));
+    }
+
+    function isValidUserOverride(data) {
+      return data.keys().hasAll(['itemName', 'tag']) &&
+             data.itemName is string &&
+             data.tag is string;
+    }
+
+    function isValidLearnedPrompt(data) {
+      return data.keys().hasAll(['text', 'usageCount', 'lastUsed', 'typicalHour']) &&
+             data.keys().size() == 4 &&
+             data.text is string && data.text.size() <= 200 &&
+             data.usageCount is number &&
+             data.typicalHour is number && data.typicalHour >= 0 && data.typicalHour <= 23 &&
+             isValidTimestamp(data.lastUsed);
+    }
+
+    function isValidHousehold(data) {
+      return data.keys().hasAll(['name', 'members', 'ownerId', 'createdAt']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.members is list &&
+             data.ownerId is string &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidDebtRecord(data) {
+      return data.keys().hasAll(['owedTo', 'owedBy', 'amount', 'relatedItemId', 'resolved', 'createdAt', 'participantUids']) &&
+             data.owedTo is string && data.owedBy is string &&
+             data.amount is number &&
+             data.relatedItemId is string &&
+             data.resolved is bool &&
+             isValidTimestamp(data.createdAt) &&
+             data.participantUids is list &&
+             (!('householdId' in data) || (data.householdId is string && data.householdId.size() <= 128)) &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 200));
+    }
+
+    function isValidBusinessTransaction(data) {
+      return data.keys().hasAll(['userId', 'date', 'type', 'amount', 'category', 'description', 'currency', 'createdAt']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.date is string && data.date.size() <= 64 &&
+             data.type in ['income', 'expense'] &&
+             data.amount is number &&
+             data.category is string && data.category.size() <= 64 &&
+             data.description is string && data.description.size() <= 256 &&
+             data.currency is string && data.currency.size() <= 10 &&
+             isValidTimestamp(data.createdAt) &&
+             (!('vatRate' in data) || data.vatRate is number) &&
+             (!('vatAmount' in data) || data.vatAmount is number);
+    }
+
+    function isMemberOfHousehold(householdId) {
+      return isSignedIn() && 
+             isValidId(householdId) && 
+             exists(/databases/$(database)/documents/households/$(householdId)) && 
+             (request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.members);
+    }
+
+    // --- Collections ---
+
+    match /system/connection_test {
+      allow get: if true;
+    }
+
+    match /businessTransactions/{txId} {
+      allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // GigiBot pending approval queue
+    match /pendingTransactions/{txId} {
+      allow get, list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /households/{householdId} {
+      allow get, list: if isSignedIn() && (request.auth.uid in resource.data.members);
+      allow create: if isSignedIn() && isValidHousehold(incoming()) && (request.auth.uid == incoming().ownerId || request.auth.uid in incoming().members);
+      allow update: if isSignedIn() && isValidHousehold(incoming()) && (request.auth.uid in resource.data.members);
+    }
+
+    match /settlements/{settlementId} {
+      // Simplified list/get access for reliable query indexing
+      allow get, list: if isSignedIn() && (
+        resource.data.owedTo == request.auth.uid || 
+        resource.data.owedBy == request.auth.uid || 
+        request.auth.uid in resource.data.get('participantUids', [])
+      );
+      allow create: if isSignedIn() && isValidDebtRecord(incoming()) && (request.auth.uid == incoming().owedTo);
+      allow update: if isSignedIn() && (resource.data.owedTo == request.auth.uid || resource.data.owedBy == request.auth.uid) && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['resolved']);
+    }
+
+    match /pantryItems/{itemId} {
+      allow get, list: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid || 
+        request.auth.uid in resource.data.get('allowedUsers', []) ||
+        (resource.data.get('sharedWithHouseholdId', null) != null && isMemberOfHousehold(resource.data.sharedWithHouseholdId))
+      );
+
+      allow create: if isSignedIn() && isValidPantryItem(incoming()) && (incoming().ownerId == request.auth.uid);
+      allow update, delete: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid || 
+        request.auth.uid in resource.data.get('allowedUsers', [])
+      );
+    }
+
+    match /users/{userId} {
+      // Allow individual profile resolution (displayName) for collaboration
+      allow get: if isSignedIn();
+      allow list: if false; 
+      allow create: if isSignedIn() && isValidUser(incoming()) && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId;
+      
+      match /userCategorizationOverrides/{overrideId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      match /learnedPrompts/{promptId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      match /budgets/{budgetId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      match /expenses/{expenseId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      match /priceHistory/{historyId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      match /shoppingList/{itemId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      match /assets/{assetId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+      // Gmail DJ connection status
+      match /connections/{connId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+  }
+}
+

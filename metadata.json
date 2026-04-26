@@ -1,0 +1,8 @@
+{
+  "name": "Smart Expense Tracker",
+  "description": "A comprehensive expense tracker with AI-powered receipt scanning, budget management, and Google Sheets cloud backup.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

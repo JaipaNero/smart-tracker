@@ -1,0 +1,233 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "baseCurrency": { "type": "string" },
+        "spendingCap": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["displayName", "baseCurrency", "spendingCap", "createdAt"]
+    },
+    "Budget": {
+      "title": "Budget",
+      "description": "User's budget for a specific category",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["category", "amount", "createdAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "An expense record with splitting support",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "amount": { "type": "number", "description": "The computed cost for the user" },
+        "rawTotal": { "type": "number", "description": "The full receipt price before splitting" },
+        "splitRatio": { "type": "number", "description": "The fraction the user pays (e.g., 0.5)" },
+        "computedCost": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "currency": { "type": "string" },
+        "isRecurring": { "type": "boolean" },
+        "hasItems": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["date", "amount", "rawTotal", "splitRatio", "computedCost", "category", "description", "currency", "isRecurring", "hasItems", "createdAt"]
+    },
+    "PriceHistory": {
+      "title": "Price History Record",
+      "description": "A record of an item price at a merchant",
+      "type": "object",
+      "properties": {
+        "expenseId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "merchant": { "type": "string" },
+        "date": { "type": "string" },
+        "unitPrice": { "type": "number" },
+        "totalPrice": { "type": "number" },
+        "quantity": { "type": "number" },
+        "currency": { "type": "string" },
+        "discount": { "type": "number" },
+        "nutritionTag": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["expenseId", "itemName", "merchant", "date", "unitPrice", "totalPrice", "quantity", "currency", "createdAt"]
+    },
+    "PantryItem": {
+      "title": "Inventory Item",
+      "description": "Mixed category inventory item with a discriminated type mapping to food, supply, or asset.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "itemType": { "enum": ["food", "supply", "asset"] },
+        "purchaseDate": { "type": "string" },
+        "burnRateDays": { "type": "number" },
+        "quantity": { "type": "number" },
+        "remainingPercentage": { "type": "number" },
+        "nutritionTag": { "type": "string" },
+        "warrantyMonths": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "sharedWithHouseholdId": { "type": "string" },
+        "splitRatio": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "itemType", "purchaseDate", "burnRateDays", "quantity", "remainingPercentage", "ownerId", "splitRatio"]
+    },
+    "DebtRecord": {
+      "title": "Debt Record",
+      "description": "Tracks settlements between roommates",
+      "type": "object",
+      "properties": {
+        "owedTo": { "type": "string" },
+        "owedBy": { "type": "string" },
+        "amount": { "type": "number" },
+        "relatedItemId": { "type": "string" },
+        "resolved": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["owedTo", "owedBy", "amount", "relatedItemId", "resolved", "createdAt"]
+    },
+    "Household": {
+      "title": "Household",
+      "description": "A group of users sharing a space",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "members": { "type": "array", "items": { "type": "string" } },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "members", "ownerId", "createdAt"]
+    },
+    "ShoppingListItem": {
+      "title": "Shopping List Item",
+      "description": "Auto-added items for replenishment",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "addedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "addedAt", "createdAt"]
+    },
+    "Asset": {
+      "title": "Asset",
+      "description": "Durable goods with warranty tracking",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "purchaseDate": { "type": "string" },
+        "merchant": { "type": "string" },
+        "price": { "type": "number" },
+        "warrantyMonths": { "type": "number" },
+        "warrantyExpiryDate": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "purchaseDate", "merchant", "price", "createdAt"]
+    },
+    "UserCategorizationOverride": {
+      "title": "User Categorization Override",
+      "description": "User manual override for nutrition tags",
+      "type": "object",
+      "properties": {
+        "itemName": { "type": "string" },
+        "tag": { "type": "string" }
+      },
+      "required": ["itemName", "tag"]
+    },
+    "LearnedPrompt": {
+      "title": "Learned Prompt",
+      "description": "User specific frequent or recent AI commands",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "usageCount": { "type": "number" },
+        "lastUsed": { "type": "string" },
+        "typicalHour": { "type": "number", "description": "0-23, hour when most used" }
+      },
+      "required": ["text", "usageCount", "lastUsed", "typicalHour"]
+    },
+    "BusinessTransaction": {
+      "title": "Business Transaction",
+      "description": "DJ income and professional expenses with VAT tracking",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "enum": ["income", "expense"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "currency": { "type": "string" },
+        "vatRate": { "type": "number" },
+        "vatAmount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "date", "type", "amount", "category", "description", "currency", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/businessTransactions/{txId}": {
+      "schema": { "$ref": "#/entities/BusinessTransaction" },
+      "description": "Professional DJ income and expenses"
+    },
+    "/users/{userId}/learnedPrompts/{promptId}": {
+      "schema": { "$ref": "#/entities/LearnedPrompt" },
+      "description": "Smart suggestions for the AI Assistant"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User configuration"
+    },
+    "/users/{userId}/budgets/{budgetId}": {
+      "schema": { "$ref": "#/entities/Budget" },
+      "description": "User budgets"
+    },
+    "/users/{userId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "User recorded expenses"
+    },
+    "/users/{userId}/priceHistory/{historyId}": {
+      "schema": { "$ref": "#/entities/PriceHistory" },
+      "description": "Extracted item lines from receipts"
+    },
+
+    "/users/{userId}/shoppingList/{itemId}": {
+      "schema": { "$ref": "#/entities/ShoppingListItem" },
+      "description": "Auto-shopping list"
+    },
+    "/users/{userId}/assets/{assetId}": {
+      "schema": { "$ref": "#/entities/Asset" },
+      "description": "Durable goods and equipment"
+    },
+    "/users/{userId}/userCategorizationOverrides/{overrideId}": {
+      "schema": { "$ref": "#/entities/UserCategorizationOverride" },
+      "description": "Manual nutrition tag overrides"
+    },
+    "/households/{householdId}": {
+      "schema": { "$ref": "#/entities/Household" },
+      "description": "Shared household groups"
+    },
+    "/settlements/{settlementId}": {
+      "schema": { "$ref": "#/entities/DebtRecord" },
+      "description": "Rent/pantry debts between users"
+    },
+    "/users/{userId}/pantryItems/{itemId}": {
+      "schema": { "$ref": "#/entities/PantryItem" },
+      "description": "Personal inventory items"
+    },
+    "/households/{householdId}/pantryItems/{itemId}": {
+      "schema": { "$ref": "#/entities/PantryItem" },
+      "description": "Shared household inventory items"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "database": "ai-studio-eda4df82-53a4-4400-baa1-4e70d58fe3dc"
+  },
+  "functions": {
+    "source": "functions",
+    "codebase": "smart-tracker",
+    "runtime": "nodejs20"
+  },
+  "hosting": {
+    "target": "smart-tracker",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

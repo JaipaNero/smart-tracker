@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "nexus-platform-beta-9283"
+  },
+  "targets": {
+    "nexus-platform-beta-9283": {
+      "hosting": {
+        "smart-tracker": [
+          "smart-tracker-gigi"
+        ]
+      }
+    }
+  }
+}
