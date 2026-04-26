@@ -1,5 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import * as logger from "firebase-functions/logger";
 import { GoogleGenAI } from "@google/genai";
 import TelegramBot from "node-telegram-bot-api";
 import { google } from "googleapis";
@@ -56,7 +57,10 @@ async function processBotUpdate(msg) {
   const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+  logger.info(`🤖 processBotUpdate | User: ${userId}, Text: ${text}, Allowed: ${TELEGRAM_USER_ID}`);
+
   if (msg.photo) {
+    logger.info("📸 Handling photo update...");
     await handlePhotoUpdate(msg);
     return;
   }
@@ -65,6 +69,7 @@ async function processBotUpdate(msg) {
 
   // Security check
   if (userId !== TELEGRAM_USER_ID) {
+    logger.warn(`⛔ Unauthorized access attempt from ${userId} (Expected: ${TELEGRAM_USER_ID})`);
     await bot.sendMessage(chatId, "Unauthorized access.");
     return;
   }
@@ -406,16 +411,19 @@ const ALL_SECRETS = [
 ];
 
 export const gigiBot = onRequest({ secrets: ALL_SECRETS, timeoutSeconds: 120 }, async (req, res) => {
+  logger.info("📥 GigiBot Request Received", { body: req.body });
   try {
     if (req.method === "POST") {
       if (req.body?.message) {
+        logger.info("💬 Message found in body, processing...");
         await processBotUpdate(req.body.message);
       } else if (req.body?.callback_query) {
+        logger.info("🔘 Callback query found in body, processing...");
         await handleCallbackQuery(req.body.callback_query);
       }
     }
   } catch (e) {
-    console.error("gigiBot top-level error:", e);
+    logger.error("❌ gigiBot top-level error", e);
   }
   res.sendStatus(200);
 });
