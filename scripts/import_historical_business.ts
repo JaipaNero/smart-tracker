@@ -3,7 +3,7 @@ import { parse } from 'csv-parse/sync';
 import path from 'path';
 
 // @ts-ignore - Importing from JS file in TS script
-import { db, APP_USER_UID } from "../functions/firebase-admin-setup.js";
+import { db, getAppUserUid } from "../functions/firebase-admin-setup.js";
 
 // --- CONFIG ---
 const CSV_PATH = './expenses.csv';
@@ -11,8 +11,6 @@ const CSV_PATH = './expenses.csv';
 // --- HELPERS ---
 function parseCurrency(str: string): number {
   if (!str) return 0;
-  // Remove currency symbol, spaces, and thousand-separators (dots)
-  // Then replace decimal comma with dot
   const cleaned = str.replace(/[€\s]/g, '').replace(/\./g, '').replace(',', '.');
   const val = parseFloat(cleaned);
   return isNaN(val) ? 0 : val;
@@ -26,7 +24,6 @@ function parseVatRate(str: string): number {
 
 function formatDate(str: string): string {
   if (!str) return new Date().toISOString().split('T')[0];
-  // Convert DD-MM-YYYY to YYYY-MM-DD
   const parts = str.split('-');
   if (parts.length !== 3) return str;
   const day = parts[0].padStart(2, '0');
@@ -47,6 +44,7 @@ function categorize(description: string): string {
 
 // --- MAIN ---
 async function importCsv() {
+  const APP_USER_UID = getAppUserUid();
   console.log('🚀 Starting Business Transaction Import...');
   
   const csvContent = fs.readFileSync(CSV_PATH, 'utf8');

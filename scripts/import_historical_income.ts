@@ -3,7 +3,7 @@ import { parse } from 'csv-parse/sync';
 import path from 'path';
 
 // @ts-ignore - Importing from JS file in TS script
-import { db, APP_USER_UID } from "../functions/firebase-admin-setup.js";
+import { db, getAppUserUid } from "../functions/firebase-admin-setup.js";
 
 // --- CONFIG ---
 const CSV_PATH = './income.csv';
@@ -46,6 +46,7 @@ function categorizeIncome(description: string): string {
 
 // --- MAIN ---
 async function importIncome() {
+  const APP_USER_UID = getAppUserUid();
   console.log('🚀 Starting Business Income Import...');
   
   const csvContent = fs.readFileSync(CSV_PATH, 'utf8');

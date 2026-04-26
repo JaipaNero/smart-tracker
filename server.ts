@@ -313,8 +313,8 @@ async function startServer() {
     });
   }
 
-  // Schedule daily notifications at 13:52 Amsterdam for testing
-  cron.schedule("52 13 * * *", () => {
+  // Schedule daily notifications at 13:59 Amsterdam for testing
+  cron.schedule("59 13 * * *", () => {
     sendDailyRecipeIdea();
   }, {
     timezone: "Europe/Amsterdam"

@@ -4,9 +4,10 @@ import fs from "fs";
 import path from "path";
 
 // @ts-ignore - Importing from JS file in TS script
-import { db, APP_USER_UID } from "../functions/firebase-admin-setup.js";
+import { db, getAppUserUid } from "../functions/firebase-admin-setup.js";
 
 async function syncBusinessGmail() {
+    const APP_USER_UID = getAppUserUid();
     console.log("🚀 Starting Deep Business Gmail Sync...");
     
     // 1. Get Tokens (In a real app, these would be in Firestore. 

@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import TelegramBot from "node-telegram-bot-api";
-import { db, APP_USER_UID } from "../../functions/firebase-admin-setup.js";
+import { db, getAppUserUid } from "../../functions/firebase-admin-setup.js";
 import { Expense } from "../types"; // tsx handles the resolution correctly
 
 // Bot is now cloud-hosted via Firebase Functions (gigiBot).
@@ -73,7 +73,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    const firebaseUid = APP_USER_UID;
+    const firebaseUid = getAppUserUid();
 
     console.log("Analyzing message with apiKey starts with:", apiKey.substring(0, 5));
     const ai = new GoogleGenAI({ apiKey });
@@ -203,7 +203,7 @@ bot.on('message', async (msg) => {
 bot.on('photo', async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from?.id.toString();
-    const firebaseUid = APP_USER_UID;
+    const firebaseUid = getAppUserUid();
     const apiKey = (process.env.CUSTOM_GEMINI_API_KEY || process.env.GEMINI_API_KEY)?.trim();
     
     console.log(`[Bot] Photo received from ${userId}`);
@@ -325,7 +325,7 @@ export async function sendDailyRecipeIdea() {
     if (!apiKey) throw new Error("GEMINI_API_KEY missing");
     const ai = new GoogleGenAI({ apiKey });
     
-    const firebaseUid = APP_USER_UID;
+    const firebaseUid = getAppUserUid();
 
     if (!db) throw new Error("Database not initialized");
 
