@@ -435,34 +435,46 @@ export const dailyChef = onSchedule({ schedule: "59 13 * * *", secrets: ALL_SECR
 // --- Autonomous Accountant ---
 
 export const connectGmail = onRequest({ secrets: ALL_SECRETS }, async (req, res) => {
+  const type = req.query.type || 'business'; // Default to business if not specified
   const oauth2Client = getOAuthClient();
+  
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/gmail.readonly'],
-    prompt: 'consent'
+    prompt: 'consent',
+    state: type // Round-trip the account type through the state parameter
   });
+  
   res.redirect(url);
 });
 
 export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, res) => {
   const APP_USER_UID = getAppUserUid();
-  const { code } = req.query;
+  const { code, state } = req.query;
+  
+  // Logic: Default to 'dj' if state is missing for backwards compatibility with existing sync functions.
+  // Otherwise, use the type provided in the state (e.g., 'personal', 'business').
+  const type = state || 'dj';
+  const docName = `gmail_${type}`;
+  
   const oauth2Client = getOAuthClient();
   
   try {
     const { tokens } = await oauth2Client.getToken(code);
     
-    // Store the refresh token securely
-    console.log(`Saving tokens for UID: ${APP_USER_UID}`);
-    await db.collection(`users/${APP_USER_UID}/connections`).doc('gmail_dj').set({
+    // Securely save tokens to the dynamic connection document
+    logger.info(`Saving ${type} Gmail tokens to ${docName} for user ${APP_USER_UID}`);
+    await db.collection(`users/${APP_USER_UID}/connections`).doc(docName).set({
       tokens,
       updatedAt: new Date().toISOString()
     });
     
-    res.send("🚀 DJ Gmail Connected Successfully! GigiBot will now start scanning for invoices.");
+    // Positive Framing: Confirm exactly which account type was linked
+    const readableType = type === 'dj' ? 'Business' : type.charAt(0).toUpperCase() + type.slice(1);
+    res.send(`🚀 ${readableType} Gmail Connected Successfully! GigiBot will now start scanning for ${readableType.toLowerCase()} invoices.`);
   } catch (error) {
-    console.error("OAuth Error:", error);
-    res.status(500).send("Authentication failed.");
+    logger.error("OAuth Callback Error:", error);
+    res.status(500).send("Authentication failed. Please try again or check server logs.");
   }
 });
 
@@ -533,6 +545,77 @@ export const syncBusinessInvoices = onSchedule({ schedule: "every 6 hours", secr
       });
     } catch (err) {
       console.error("Gemini/Bot extraction error:", err);
+    }
+  }
+});
+
+export const syncPersonalBills = onSchedule({ 
+  schedule: "every 12 hours", 
+  secrets: ALL_SECRETS, 
+  timeoutSeconds: 300 
+}, async (event) => {
+  const APP_USER_UID = getAppUserUid();
+  const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc('gmail_personal').get();
+  
+  if (!connSnap.exists) {
+    logger.info("⚠️ gmail_personal connection not found for sync.");
+    return;
+  }
+  
+  const { tokens } = connSnap.data();
+  const oauth2Client = getOAuthClient();
+  oauth2Client.setCredentials(tokens);
+  
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  const res = await gmail.users.messages.list({
+    userId: 'me',
+    q: '(Netflix OR Spotify OR Uber OR Utilities OR receipt OR "order confirmation") -category:social -category:promotions',
+    maxResults: 10
+  });
+
+  if (!res.data.messages) return;
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+  for (const msg of res.data.messages) {
+    const msgId = msg.id;
+    // Check if we already processed this
+    const processedSnap = await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).get();
+    if (processedSnap.exists) continue;
+
+    try {
+      const fullMsg = await gmail.users.messages.get({ userId: 'me', id: msgId });
+      const snippet = fullMsg.data.snippet;
+      
+      const prompt = `Extract personal expense data from this email snippet: "${snippet}". 
+      IMPORTANT: Exclude any invoices related to Music Sales, DJ Gigs, Gear & Equipment, or Business software. We only want personal B2C expenses.
+      Available categories: [Food & Dining, Transport, Shopping, Entertainment, Bills & Utilities, Other].
+      Return ONLY JSON: { "description": string, "amount": number, "date": string, "category": string }`;
+      
+      const result = await ai.models.generateContent({ model: "gemini-flash-latest", contents: prompt });
+      const cleanJson = result.text.replace(/```json/g, "").replace(/```/g, "").trim();
+      const txData = JSON.parse(cleanJson);
+      
+      // Save to staging collection: users/${APP_USER_UID}/pendingBills
+      await db.collection(`users/${APP_USER_UID}/pendingBills`).add({
+        description: txData.description,
+        amount: txData.amount,
+        date: txData.date,
+        category: txData.category,
+        source: 'gmail_personal_sync',
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      });
+
+      // Mark as processed
+      await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).set({
+        processedAt: new Date().toISOString(),
+        syncSource: 'gmail_personal'
+      });
+      
+      logger.info(`✅ Successfully staged personal bill: ${txData.description} (€${txData.amount})`);
+    } catch (err) {
+      logger.error(`❌ Error processing personal bill message ${msgId}:`, err);
     }
   }
 });

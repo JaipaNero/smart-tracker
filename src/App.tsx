@@ -80,6 +80,8 @@ import GmailSyncView from './GmailSyncView';
 import { SettlementsView } from './SettlementsView';
 import { AIAssistant } from './components/AIAssistant';
 import BusinessView from './BusinessView';
+import { PendingBills } from './components/PendingBills';
+
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#4b5563', '#14b8a6', '#f97316'];
 
@@ -1003,6 +1005,7 @@ Return valid JSON matching the schema.` },
         )}
         {activeTab === 'dashboard' && (
           <Dashboard 
+            user={user!}
             totalSpent={totalSpentMonth} 
             categories={spendingByCategory} 
             budgets={budgets} 
@@ -1206,6 +1209,7 @@ function MenuOption({ active, onClick, icon, label, sub }: { active: boolean, on
 }
 
 function Dashboard({ 
+  user,
   totalSpent, 
   categories, 
   budgets, 
@@ -1221,6 +1225,7 @@ function Dashboard({
   roomieId,
   splitExistingItem
 }: { 
+  user: User,
   totalSpent: number, 
   categories: any[], 
   budgets: Budget[], 
@@ -1271,6 +1276,9 @@ function Dashboard({
 
   return (
     <div className="space-y-6">
+      {/* Pending Bills Section */}
+      <PendingBills user={user} baseCurrency={baseCurrency} />
+
       {/* Monthly Summary Card */}
       <div className="bg-bg-card p-6 rounded-2xl border border-border-dark shadow-xl relative overflow-hidden">
         <p className="text-text-muted text-[11px] font-bold uppercase tracking-widest mb-2">Monthly Spending</p>
