@@ -5,10 +5,11 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with forceLongPolling to fix connectivity issues in certain networks/sandboxes
+// Initialize Firestore with the named "ai-studio" database instance
+// This bridges the final gap between the UI and the Cloud!
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
+}, "ai-studio-eda4df82-53a4-4400-baa1-4e70d58fe3dc");
 
 export const auth = getAuth();
 export const googleProvider = new GoogleAuthProvider();

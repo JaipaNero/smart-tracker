@@ -85,22 +85,37 @@ async function syncBusinessGmail() {
 
             if (analysis.isBusiness && analysis.data) {
                 const tx = analysis.data;
-                await db.collection("businessTransactions").add({
-                    ...tx,
-                    userId: APP_USER_UID,
+                
+                // Map to the primary user expenses schema for UI parity
+                const expenseSchema = {
+                    date: tx.date,
+                    amount: tx.amount,
+                    rawTotal: tx.amount,
+                    computedCost: tx.amount,
+                    splitRatio: 1,
+                    category: tx.category,
+                    description: `[Business] ${tx.description}`,
+                    currency: 'EUR',
+                    isRecurring: false,
+                    hasItems: false,
                     vatAmount: tx.amount - (tx.amount / (1 + (tx.vatRate / 100))),
+                    vatRate: tx.vatRate,
                     source: "gmail_sync",
+                    status: 'approved',
                     gmailId: msg.id,
                     createdAt: new Date().toISOString()
-                });
-                console.log(`✅ Saved: ${tx.description} (€${tx.amount})`);
+                };
+
+                // Route to the Single Source of Truth collection!
+                await db.collection(`users/${APP_USER_UID}/expenses`).add(expenseSchema);
+                console.log(`✅ Saved Business Transaction: ${tx.description} (€${tx.amount}) to primary ledger.`);
             }
         } catch (e) {
-            console.error(`Failed to process ${msg.id}:`, e);
+            console.error(`❌ Failed to process ${msg.id}:`, e);
         }
     }
 
-    console.log("✨ Sync complete! Check your Business tab in the app.");
+    console.log("✨ Sync complete! All business transactions routed to the primary expenses ledger.");
 }
 
 syncBusinessGmail().catch(console.error);

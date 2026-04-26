@@ -4,7 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import TelegramBot from "node-telegram-bot-api";
 import { google } from "googleapis";
 import axios from "axios";
-import { db, APP_USER_UID } from "./firebase-admin-setup.js";
+import { db, getAppUserUid } from "./firebase-admin-setup.js";
 
 // These are resolved lazily at function invocation time (secrets are injected then)
 function getBot() {
@@ -48,6 +48,7 @@ async function analyzeMessage(message, ai) {
 }
 
 async function processBotUpdate(msg) {
+  const APP_USER_UID = getAppUserUid();
   const bot = getBot();
   const chatId = msg.chat.id;
   const userId = msg.from?.id.toString();
@@ -184,6 +185,7 @@ async function processBotUpdate(msg) {
 }
 
 async function handleCallbackQuery(query) {
+  const APP_USER_UID = getAppUserUid();
   const bot = getBot();
   const chatId = query.message.chat.id;
   const data = JSON.parse(query.data);
@@ -251,6 +253,7 @@ async function handleCallbackQuery(query) {
 }
 
 async function handlePhotoUpdate(msg) {
+  const APP_USER_UID = getAppUserUid();
   const bot = getBot();
   const chatId = msg.chat.id;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -351,6 +354,7 @@ Return ONLY valid JSON matching this schema:
 }
 
 async function sendDailyRecipeIdea() {
+  const APP_USER_UID = getAppUserUid();
   const bot = getBot();
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID;
@@ -416,7 +420,7 @@ export const gigiBot = onRequest({ secrets: ALL_SECRETS, timeoutSeconds: 120 }, 
   res.sendStatus(200);
 });
 
-export const dailyChef = onSchedule({ schedule: "5 10 * * *", secrets: ALL_SECRETS, timeoutSeconds: 120 }, async (event) => {
+export const dailyChef = onSchedule({ schedule: "5 10 * * *", secrets: ALL_SECRETS, timeoutSeconds: 120, timeZone: "Europe/Amsterdam" }, async (event) => {
   await sendDailyRecipeIdea();
 });
 
@@ -433,6 +437,7 @@ export const connectGmail = onRequest({ secrets: ALL_SECRETS }, async (req, res)
 });
 
 export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, res) => {
+  const APP_USER_UID = getAppUserUid();
   const { code } = req.query;
   const oauth2Client = getOAuthClient();
   
@@ -454,6 +459,7 @@ export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, re
 });
 
 export const syncBusinessInvoices = onSchedule({ schedule: "every 6 hours", secrets: ALL_SECRETS, timeoutSeconds: 300 }, async (event) => {
+  const APP_USER_UID = getAppUserUid();
   const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc('gmail_dj').get();
   
   if (!connSnap.exists) return;

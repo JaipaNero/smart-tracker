@@ -38,20 +38,18 @@ export const db = getFirestore(FIRESTORE_DB_ID);
 console.log(`✅ Successfully connected to Named Database: [${FIRESTORE_DB_ID}]`);
 
 /**
- * Standardized User Identification
- * Replaces all fallback IDs with mandatory environment check.
- * This prevents data corruption or leaks into incorrect user buckets.
+ * Standardized User Identification (Lazy Resolver)
+ * Dynamically retrieves the UID at runtime to ensure compatibility with
+ * Firebase Secrets injection during Cloud Function execution blocks.
  */
-export const APP_USER_UID = (() => {
-    // Check for both legacy and new standard naming during transition
+export function getAppUserUid() {
     const uid = process.env.APP_USER_UID || process.env.FIREBASE_USER_ID;
     
     if (!uid) {
-        console.error("❌ ARCHITECTURAL ERROR: APP_USER_UID is missing from environment variables.");
-        console.error("Please ensure your .env or Cloud environment contains: APP_USER_UID=your_uid_here");
-        // We throw an error instead of using a fallback to maintain system integrity
+        console.error("❌ RUNTIME ERROR: APP_USER_UID is missing from the current execution context.");
+        console.error("If running locally, check your .env. If in Cloud, check your Secrets config.");
         throw new Error("Missing mandatory APP_USER_UID");
     }
     
     return uid;
-})();
+}
