@@ -533,7 +533,7 @@ export const gigiBot = onRequest({ secrets: ALL_SECRETS, timeoutSeconds: 120 }, 
   res.sendStatus(200);
 });
 
-export const dailyChef = onSchedule({ schedule: "37 18 * * *", secrets: ALL_SECRETS, timeoutSeconds: 120, timeZone: "Europe/Amsterdam" }, async (event) => {
+export const dailyChef = onSchedule({ schedule: "00 11 * * *", secrets: ALL_SECRETS, timeoutSeconds: 120, timeZone: "Europe/Amsterdam" }, async (event) => {
   await sendDailyRecipeIdea();
 });
 
