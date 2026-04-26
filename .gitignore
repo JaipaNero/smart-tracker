@@ -10,3 +10,4 @@ service-account.json
 firebase-applet-config.json
 *.csv
 scratch/
+.firebase/

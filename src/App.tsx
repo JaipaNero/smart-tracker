@@ -59,13 +59,13 @@ import {
   LineChart,
   Line
 } from 'recharts';
-import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval, subMonths, eachMonthOfInterval, formatDistanceToNow } from 'date-fns';
+import { format, parseISO, formatDistanceToNow } from 'date-fns';
 import { GoogleGenAI, Type } from '@google/genai';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
-import { Expense, Budget, AppState, CATEGORIES, CURRENCIES, ReceiptItem, ItemPriceRecord, ShoppingListItem } from './types';
-import { auth, db, signInWithPopup, googleProvider, onAuthStateChanged, signOut, collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where, User, writeBatch, addDoc, or } from './lib/firebase';
+import { Expense, Budget, CATEGORIES, CURRENCIES, ReceiptItem, ItemPriceRecord, ShoppingListItem } from './types';
+import { auth, db, signInWithPopup, googleProvider, signOut, doc, writeBatch, addDoc, onSnapshot } from './lib/firebase';
 import PantryView from './PantryView';
 import AssetsView from './AssetsView';
 import { MealGenerator } from './components/MealGenerator';
@@ -81,6 +81,10 @@ import { SettlementsView } from './SettlementsView';
 import { AIAssistant } from './components/AIAssistant';
 import BusinessView from './BusinessView';
 import { PendingBills } from './components/PendingBills';
+import { RECEIPT_SCAN_PROMPT, validateTransactionDate } from './lib/constants';
+import { useAuth } from './hooks/useAuth';
+import { useLedger } from './hooks/useLedger';
+import { useInventory } from './hooks/useInventory';
 
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#4b5563', '#14b8a6', '#f97316'];
@@ -197,24 +201,27 @@ const CategoryAllocationItem: React.FC<CategoryItemProps> = ({
 };
 
 export default function App() {
-  // --- Auth State ---
-  const [user, setUser] = useState<User | null>(null);
-  const [loadingSession, setLoadingSession] = useState(true);
+  const { user, loadingSession } = useAuth();
+  const { 
+    expenses, 
+    hydratedExpenses, 
+    budgets, 
+    priceHistory, 
+    debts, 
+    baseCurrency, 
+    spendingCap, 
+    totalSpentMonth, 
+    spendingByCategory,
+    setExpenses 
+  } = useLedger(user);
+  const { pantryItems, shoppingList, setPantryItems, setShoppingList } = useInventory(user);
 
-  // --- State ---
+  // --- UI State ---
   const [activeTab, setActiveTab] = useState<'dashboard' | 'expenses' | 'items' | 'pantry' | 'assets' | 'meals' | 'reports' | 'settings' | 'household' | 'deals' | 'inbox' | 'business' | 'shopping' | 'settlements'>('dashboard');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [baseCurrency, setBaseCurrency] = useState('EUR');
-  const [spendingCap, setSpendingCap] = useState(3000);
   const [isScanning, setIsScanning] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-  const [priceHistory, setPriceHistory] = useState<ItemPriceRecord[]>([]);
-  const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
-  const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
-  const [debts, setDebts] = useState<DebtRecord[]>([]);
 
   // Multi-tenant / Split Ledger State
   const [householdId, setHouseholdId] = useState<string | null>(localStorage.getItem('activeHouseholdId'));
@@ -243,6 +250,7 @@ export default function App() {
 
   const [hideNav, setHideNav] = useState(false);
 
+  // --- Sync State (Local) ---
   useEffect(() => {
     if (householdId) {
       localStorage.setItem('activeHouseholdId', householdId);
@@ -251,121 +259,6 @@ export default function App() {
     }
   }, [householdId]);
 
-  // --- Auth Handler ---
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
-        localStorage.setItem('google_tokens', JSON.stringify(event.data.tokens));
-        setGoogleTokens(event.data.tokens);
-        setStatusMessage({ type: 'success', text: 'Google Workspace Connected' });
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoadingSession(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // --- Sync Data ---
-  useEffect(() => {
-    if (!user) return;
-    const uid = user.uid;
-
-    const unsubUser = onSnapshot(doc(db, `users/${uid}`), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setBaseCurrency(data.baseCurrency || 'EUR');
-        setSpendingCap(data.spendingCap || 3000);
-      } else {
-        setDoc(doc(db, `users/${uid}`), {
-          displayName: user.displayName || 'Anonymous',
-          baseCurrency: 'EUR',
-          spendingCap: 3000,
-          createdAt: new Date().toISOString()
-        }, { merge: true }).catch(console.error);
-      }
-    }, (error) => {
-      console.error('User snapshot error:', error);
-    });
-
-    const unsubExpenses = onSnapshot(collection(db, `users/${uid}/expenses`), (snap) => {
-      const exps = snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
-      setExpenses(exps.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-    }, (error) => {
-      console.error('Expenses snapshot error:', error);
-    });
-
-    const unsubBudgets = onSnapshot(collection(db, `users/${uid}/budgets`), (snap) => {
-      setBudgets(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Budget)));
-    }, (error) => {
-      console.error('Budgets snapshot error:', error);
-    });
-
-    const unsubHistory = onSnapshot(collection(db, `users/${uid}/priceHistory`), (snap) => {
-      setPriceHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as ItemPriceRecord)));
-    }, (error) => {
-      console.error('History snapshot error:', error);
-    });
-
-    // Synchronize ALL accessible pantry items (Personal + Shared) from Root
-    let unsubPantry: () => void = () => {};
-    let unsubLegacy: () => void = () => {};
-
-    const qPantryRoot = query(
-      collection(db, 'pantryItems'),
-      where('allowedUsers', 'array-contains', uid)
-    );
-
-    unsubPantry = onSnapshot(qPantryRoot, (snap) => {
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as PantryItem));
-      setPantryItems(items);
-    }, (error) => {
-      console.error(`Pantry Root Sync error [UID: ${uid}]:`, error);
-      // Fallback: Owner-only query
-      const qLegacy = query(collection(db, 'pantryItems'), where('ownerId', '==', uid));
-      unsubLegacy = onSnapshot(qLegacy, (s) => {
-        const items = s.docs.map(d => ({ id: d.id, ...d.data() } as PantryItem));
-        setPantryItems(items);
-      }, (e) => console.error(`Pantry Legacy Sync error [UID: ${uid}]:`, e));
-    });
-
-    const initAsync = async () => {
-      await loadNutritionOverrides(uid);
-    };
-    initAsync();
-
-    const unsubShopping = onSnapshot(collection(db, `users/${uid}/shoppingList`), snap => {
-      setShoppingList(snap.docs.map(d => ({ id: d.id, ...d.data() } as ShoppingListItem)));
-    }, (error) => {
-      console.error('Shopping list sync error:', error);
-    });
-
-    const unsubDebts = onSnapshot(
-      query(
-        collection(db, 'settlements'), 
-        or(
-          where('owedTo', '==', uid),
-          where('owedBy', '==', uid),
-          where('participantUids', 'array-contains', uid)
-        )
-      ), 
-      snap => {
-        setDebts(snap.docs.map(d => ({id: d.id, ...d.data()} as DebtRecord)));
-      }
-    );
-
-    return () => {
-      unsubUser(); unsubExpenses(); unsubBudgets(); unsubHistory(); 
-      unsubPantry(); unsubLegacy(); unsubShopping(); unsubDebts();
-    };
-  }, [user]);
-
   // Sync Roomie ID for splitting
   useEffect(() => {
     if (householdId && user) {
@@ -373,7 +266,6 @@ export default function App() {
         if (snap.exists()) {
           const members = snap.data().members || [];
           const otherMembers = members.filter((m: string) => m !== user.uid);
-          // For now, we pick the first other member as the default splitting partner
           if (otherMembers.length > 0) {
             setRoomieId(otherMembers[0]);
           } else {
@@ -387,46 +279,26 @@ export default function App() {
     }
   }, [householdId, user]);
 
-  // Merge items into expenses
-  const hydratedExpenses = useMemo(() => {
-    return expenses.map(exp => {
-      if (exp.hasItems) {
-        const parts = priceHistory.filter(h => h.expenseId === exp.id);
-        return { 
-          ...exp, 
-          items: parts.map(p => ({
-            id: p.id,
-            name: p.itemName,
-            quantity: p.quantity,
-            unitPrice: p.unitPrice,
-            totalPrice: p.totalPrice,
-            discount: p.discount,
-            nutritionTag: p.nutritionTag as any,
-            type: p.type as any
-          }))
-        };
-      }
-      return exp;
-    });
-  }, [expenses, priceHistory]);
-
   // --- Helpers ---
   const addExpense = async (newExpense: Omit<Expense, 'id'>) => {
     if (!user) return;
-    const expenseId = crypto.randomUUID();
-    const hasItems = newExpense.items && newExpense.items.length > 0;
     
     try {
+      const batch = writeBatch(db);
+      const expenseId = crypto.randomUUID();
+      const hasItems = newExpense.items && newExpense.items.length > 0;
       const { items, receiptUrl, ...expenseData } = newExpense as any;
       const amount = expenseData.amount || 0;
+      const now = new Date().toISOString();
       
-      await setDoc(doc(db, `users/${user.uid}/expenses/${expenseId}`), {
+      const expenseRef = doc(db, `users/${user.uid}/expenses/${expenseId}`);
+      batch.set(expenseRef, {
         ...expenseData,
         rawTotal: expenseData.rawTotal ?? amount,
         splitRatio: expenseData.splitRatio ?? 1.0,
         computedCost: expenseData.computedCost ?? amount,
         hasItems: !!hasItems,
-        createdAt: new Date().toISOString()
+        createdAt: now
       });
 
       if (hasItems && items) {
@@ -435,7 +307,8 @@ export default function App() {
           const categorizedFields = categorizeItem(item.name, item.type);
           const nTag = categorizedFields.itemType === 'food' ? categorizeNutrition(item.name) : undefined;
 
-          await setDoc(doc(db, `users/${user.uid}/priceHistory/${historyId}`), {
+          const historyRef = doc(db, `users/${user.uid}/priceHistory/${historyId}`);
+          batch.set(historyRef, {
             expenseId: expenseId,
             itemName: item.name,
             merchant: newExpense.description,
@@ -447,24 +320,24 @@ export default function App() {
             ...(nTag ? { nutritionTag: nTag } : {}),
             type: categorizedFields.itemType,
             ...(item.discount ? { discount: item.discount } : {}),
-            createdAt: new Date().toISOString()
+            createdAt: now
           });
 
-          if (item.type === 'durable') {
-            // Add to Assets with warranty tracking
+          if (item.type === 'durable' || item.type === 'asset') {
             const assetId = crypto.randomUUID();
-            await setDoc(doc(db, `users/${user.uid}/assets/${assetId}`), {
+            const assetRef = doc(db, `users/${user.uid}/assets/${assetId}`);
+            batch.set(assetRef, {
               name: item.name,
               purchaseDate: newExpense.date,
               merchant: newExpense.description,
               price: item.totalPrice,
-              warrantyMonths: 24, // Default assumption 2 years for durables
-              createdAt: new Date().toISOString()
+              warrantyMonths: 24,
+              createdAt: now
             });
-          } else {
-            // HITL: Automatically add scanned items to Pantry stock (default)
+          } else if (item.type === 'food' || item.type === 'supply') {
             const pantryId = crypto.randomUUID();
-            await setDoc(doc(db, `pantryItems/${pantryId}`), {
+            const pantryRef = doc(db, `pantryItems/${pantryId}`);
+            batch.set(pantryRef, {
               id: pantryId,
               name: item.name,
               purchaseDate: newExpense.date,
@@ -481,13 +354,15 @@ export default function App() {
               targetPrice: item.unitPrice * 0.95,
               nutritionTag: nTag,
               itemType: item.type === 'food' ? 'food' : 'supply',
-              createdAt: new Date().toISOString(),
+              createdAt: now,
               ...categorizedFields
             } as PantryItem);
           }
         }
       }
-      setStatusMessage({ type: 'success', text: 'Expense tracked' });
+      
+      await batch.commit();
+      setStatusMessage({ type: 'success', text: 'Expense tracked atomically' });
     } catch (e) {
       console.error(e);
       setStatusMessage({ type: 'error', text: 'Failed to record expense' });
@@ -624,38 +499,6 @@ export default function App() {
     }
   };
 
-  const currentMonthExpenses = useMemo(() => {
-    const start = startOfMonth(new Date());
-    const end = endOfMonth(new Date());
-    return hydratedExpenses.filter(e => isWithinInterval(parseISO(e.date), { start, end }));
-  }, [hydratedExpenses]);
-
-  const totalSpentMonth = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
-
-  const spendingByCategory = useMemo(() => {
-    const data: Record<string, number> = {};
-    currentMonthExpenses.forEach(e => {
-      if (e.items && e.items.length > 0) {
-        e.items.forEach(item => {
-          let cat = e.category; // Fallback to the receipt's main category
-          
-          // Refine category based on item type if it's more specific
-          if (item.type === 'food') cat = 'Food & Dining';
-          else if (item.type === 'supply') cat = 'Living & Household';
-          else if (item.type === 'durable') cat = 'Living & Household';
-          else if (item.type === 'service' && e.category === 'Food & Dining') cat = 'Other';
-          
-          data[cat] = (data[cat] || 0) + (item.totalPrice || 0);
-        });
-      } else {
-        data[e.category] = (data[e.category] || 0) + (e.amount || 0);
-      }
-    });
-    return Object.entries(data)
-      .map(([name, value]) => ({ name, value }))
-      .filter(entry => entry.value > 0)
-      .sort((a, b) => b.value - a.value);
-  }, [currentMonthExpenses]);
 
   // --- Receipt Scanning ---
   const scanReceipt = async (file: File) => {
@@ -673,37 +516,14 @@ export default function App() {
         throw new Error("Gemini API Key is missing. Please set it in Setup.");
       }
 
+      const prompt = RECEIPT_SCAN_PROMPT(CATEGORIES);
+
       const response = await ai.models.generateContent({
         model: 'gemini-flash-latest',
         contents: [
           {
             parts: [
-              { text: `Extract data from this receipt. Available categories: ${CATEGORIES.join(', ')}. 
-              
-IMPORTANT CLASSIFICATION RULES:
-- 'food': Strictly edible products like groceries, snacks, drinks, meat, vegetables.
-- 'supply': Non-edible household items that get used up: cleaning products, garbage bags (e.g., 'zakken'), toilet paper, batteries, napkins, toiletries.
-- 'service': All non-physical costs: delivery fees, tips, service charges, taxes, bag fees, surcharges.
-- 'durable': Physical long-term assets: electronics, furniture, household equipment, clothing.
-
-DISCOUNT & CORRECTION HANDLING:
-- Modern receipts often show discounts as negative lines (e.g., '-0,60' or 'KORTING').
-- If a discount or correction follows an item, associate it with that item:
-  1. Add the discount amount (as a positive number) to the item's 'discount' field.
-  2. The 'totalPrice' MUST be the NET amount (Original Price - Discount).
-- If a line is a deposit/statiegeld (e.g. 'statiegeld', 'fles'), classify it as an item with type 'service' and aisle 'Other'.
-
-AISLE CLASSIFICATION RULES:
-- 'Produce': Fresh fruits and vegetables.
-- 'Proteins': Meat, fish, eggs, tofu, legumes.
-- 'Dairy': Milk (including plant milks), cheese, yogurt, butter, zuivel.
-- 'Starch': Pasta, rice, bread, cereals, potatoes, flour.
-- 'Pantry': Oils, spices, herbs, canned goods, sauces, honey, coffee/tea.
-- 'Drinks': Sodas, juices, water, alcoholic beverages.
-- 'Household': Cleaners, paper products, items classified as 'supply'.
-- 'Other': Anything that doesn't fit the above.
-
-Return valid JSON matching the schema.` },
+              { text: prompt },
               { inlineData: { data: base64Data, mimeType: file.type } }
             ]
           }
@@ -777,12 +597,7 @@ Return valid JSON matching the schema.` },
 
       const batch = writeBatch(db);
       const now = new Date().toISOString();
-      const rawDate = scannedReceiptData.date || now;
-      
-      // Simple date guard: If year is > 5 years old, assume hallucination and use 'now'
-      const purchaseDate = (new Date(rawDate).getFullYear() < new Date().getFullYear() - 1) 
-        ? now.split('T')[0] 
-        : rawDate;
+      const purchaseDate = validateTransactionDate(scannedReceiptData.date || now);
 
       for (const item of items) {
         const splitInfo = splits.find(s => s.itemId === item.id);

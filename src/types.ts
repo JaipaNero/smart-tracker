@@ -53,6 +53,10 @@ export interface Expense {
   receiptUrl?: string; // Local base64 or blob URL
   hasItems?: boolean;
   items?: ReceiptItem[];
+  vatAmount?: number;
+  vatRate?: number;
+  source?: 'manual' | 'gmail_sync' | 'telegram' | 'gmail_personal_sync';
+  status?: 'pending' | 'approved' | 'rejected';
   createdAt: string;
 }
 

@@ -6,6 +6,7 @@ import TelegramBot from "node-telegram-bot-api";
 import { google } from "googleapis";
 import axios from "axios";
 import { db, getAppUserUid } from "./firebase-admin-setup.js";
+import { randomUUID } from "crypto";
 
 // These are resolved lazily at function invocation time (secrets are injected then)
 function getBot() {
@@ -31,12 +32,14 @@ function getOAuthClient() {
 // --- Helper Functions ---
 async function analyzeMessage(message, ai) {
   const today = new Date().toISOString().split('T')[0];
-  const prompt = `Analyze this user message for Aura financial bot: "${message}". 
-  Today's date is ${today}.
+  const CATEGORIES = ['Food & Dining', 'Living & Household', 'Transport', 'Shopping', 'Entertainment', 'Health', 'Bills & Utilities', 'Travel', 'Education', 'Investments', 'Other'];
   
+  const prompt = `Analyze this user message for Aura financial bot. 
+  Today's date is ${today}.
+
   Determine if the user wants to:
   1. Add an expense: return JSON { "type": "expense", "data": { "description": string, "amount": number, "category": string, "date": string (YYYY-MM-DD) } }. 
-     Supported categories: [Food & Dining, Living & Household, Transport, Shopping, Entertainment, Health, Bills & Utilities, Travel, Education, Investments, Other].
+     Supported categories: [${CATEGORIES.join(', ')}]. 
      If the user says "today", use ${today}. If they say "yesterday", calculate the date.
   2. Add a split expense with someone: return JSON { "type": "split_expense", "data": { "description": string, "amount": number, "category": string, "date": string (YYYY-MM-DD), "splitWith": string } }.
   3. Ask a question about spending/finances: return JSON { "type": "spending_query", "data": { "question": string } }.
@@ -46,6 +49,16 @@ async function analyzeMessage(message, ai) {
   const response = await ai.models.generateContent({ model: "gemini-flash-latest", contents: prompt });
   const jsonText = response.text.replace(/```json/g, "").replace(/```/g, "");
   return JSON.parse(jsonText);
+}
+
+function validateTransactionDate(dateStr) {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime()) || d.getFullYear() > currentYear + 1 || d.getFullYear() < currentYear - 5) {
+    return now.toISOString().split('T')[0];
+  }
+  return dateStr.split('T')[0];
 }
 
 async function processBotUpdate(msg) {
@@ -98,19 +111,55 @@ async function processBotUpdate(msg) {
 
       if (analysis.type === 'split_expense' && data.splitWith) {
         const hSnap = await db.collection("households").where("members", "array-contains", APP_USER_UID).get();
-        if (!hSnap.empty) {
-          const household = hSnap.docs[0];
-          householdId = household.id;
-          const members = household.data().members || [];
+        const potentialMatches = [];
+
+        for (const hDoc of hSnap.docs) {
+          const hData = hDoc.data();
+          const members = hData.members || [];
           for (const mUid of members) {
             if (mUid === APP_USER_UID) continue;
             const uSnap = await db.collection("users").doc(mUid).get();
-            if (uSnap.data()?.displayName?.toLowerCase().includes(data.splitWith.toLowerCase())) {
-              targetUid = mUid;
-              break;
+            const uData = uSnap.data();
+            if (uData?.displayName?.toLowerCase().includes(data.splitWith.toLowerCase())) {
+              potentialMatches.push({
+                targetUid: mUid,
+                targetName: uData.displayName,
+                householdId: hDoc.id,
+                householdName: hData.name
+              });
             }
           }
         }
+
+        if (potentialMatches.length === 0) {
+          await bot.sendMessage(chatId, `⚠️ I couldn't find a roommate named "${data.splitWith}" in any of your households.`);
+          return;
+        }
+
+        if (potentialMatches.length > 1) {
+          // Ambiguity detected - save to pending and ask
+          const pendingRef = await db.collection('pendingTransactions').add({
+            type: 'split_selection',
+            analysis,
+            potentialMatches,
+            uid: APP_USER_UID,
+            createdAt: now
+          });
+
+          const buttons = potentialMatches.map((m, idx) => ([{
+            text: `👥 ${m.targetName} (${m.householdName})`,
+            callback_data: JSON.stringify({ a: 'hsel', id: pendingRef.id, idx })
+          }]));
+
+          await bot.sendMessage(chatId, `🤔 I found multiple possible matches for "${data.splitWith}". Which one did you mean?`, {
+            reply_markup: { inline_keyboard: buttons }
+          });
+          return;
+        }
+
+        // Exactly one match
+        targetUid = potentialMatches[0].targetUid;
+        householdId = potentialMatches[0].householdId;
       }
 
       const isSplit = !!targetUid;
@@ -118,7 +167,7 @@ async function processBotUpdate(msg) {
       const computedCost = isSplit ? amount / 2 : amount;
 
       const expenseData = {
-        date: data.date,
+        date: validateTransactionDate(data.date),
         amount: computedCost,
         rawTotal: amount,
         splitRatio: isSplit ? 0.5 : 1,
@@ -252,6 +301,55 @@ async function handleCallbackQuery(query) {
       message_id: query.message.message_id,
       parse_mode: 'Markdown'
     });
+  } else if (data.a === 'hsel') {
+    // Household/Roommate selection for split
+    const snap = await db.collection('pendingTransactions').doc(data.id).get();
+    if (!snap.exists) {
+      await bot.sendMessage(chatId, "❌ Error: Selection data expired.");
+      return;
+    }
+
+    const pendingData = snap.data();
+    const match = pendingData.potentialMatches[data.idx];
+    const analysis = pendingData.analysis;
+    const expenseData = analysis.data;
+    const now = new Date().toISOString();
+
+    const amount = expenseData.amount;
+    const computedCost = amount / 2;
+
+    const expenseSchema = {
+      date: validateTransactionDate(expenseData.date),
+      amount: computedCost,
+      rawTotal: amount,
+      splitRatio: 0.5,
+      computedCost: computedCost,
+      category: expenseData.category,
+      description: `Split: ${expenseData.description}`,
+      currency: 'EUR',
+      isRecurring: false,
+      hasItems: false,
+      createdAt: now
+    };
+
+    await db.collection(`users/${APP_USER_UID}/expenses`).add(expenseSchema);
+    await db.collection("settlements").add({
+      owedTo: APP_USER_UID,
+      owedBy: match.targetUid,
+      amount: amount / 2,
+      resolved: false,
+      createdAt: now,
+      householdId: match.householdId,
+      description: `Split from Bot: ${expenseData.description}`
+    });
+
+    await db.collection('pendingTransactions').doc(data.id).delete();
+
+    await bot.editMessageText(`👥 *Split recorded with ${match.targetName}!* \n✅ Added: ${expenseData.description} (€${amount})`, {
+      chat_id: chatId,
+      message_id: query.message.message_id,
+      parse_mode: 'Markdown'
+    });
   }
   
   await bot.answerCallbackQuery(query.id);
@@ -288,25 +386,7 @@ DISCOUNT & CORRECTION HANDLING:
 AISLE CLASSIFICATION RULES:
 - 'Produce', 'Proteins', 'Dairy', 'Starch', 'Pantry', 'Drinks', 'Household', 'Other'.
 
-Return ONLY valid JSON matching this schema:
-{
-  "date": "YYYY-MM-DD",
-  "amount": number,
-  "currency": "EUR",
-  "category": "string",
-  "description": "string",
-  "items": [
-    {
-      "name": "string",
-      "genericName": "string",
-      "quantity": number,
-      "unitPrice": number,
-      "totalPrice": number,
-      "type": "food" | "service" | "durable" | "supply",
-      "aisle": "string"
-    }
-  ]
-}`;
+Return valid JSON matching the schema.`;
 
     const result = await ai.models.generateContent({
       model: "gemini-flash-latest",
@@ -320,7 +400,32 @@ Return ONLY valid JSON matching this schema:
         }
       ],
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            date: { type: "STRING" },
+            amount: { type: "NUMBER" },
+            currency: { type: "STRING" },
+            category: { type: "STRING" },
+            description: { type: "STRING" },
+            items: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  name: { type: "STRING" },
+                  genericName: { type: "STRING" },
+                  quantity: { type: "NUMBER" },
+                  unitPrice: { type: "NUMBER" },
+                  totalPrice: { type: "NUMBER" },
+                  type: { type: "STRING" },
+                  aisle: { type: "STRING" }
+                }
+              }
+            }
+          }
+        }
       }
     });
 
@@ -328,7 +433,7 @@ Return ONLY valid JSON matching this schema:
     const now = new Date().toISOString();
     
     const expenseData = {
-      date: data.date,
+      date: validateTransactionDate(data.date),
       amount: data.amount,
       rawTotal: data.amount,
       splitRatio: 1,
@@ -340,7 +445,7 @@ Return ONLY valid JSON matching this schema:
       hasItems: data.items && data.items.length > 0,
       items: (data.items || []).map((i) => ({
         ...i,
-        id: Math.random().toString(36).substring(2, 15)
+        id: randomUUID()
       })),
       createdAt: now
     };
