@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Calendar, Store, Trash2, ShieldAlert, BadgeCheck } from 'lucide-react';
 import { format, parseISO, addMonths, isPast, differenceInDays } from 'date-fns';
 import { cn, formatCurrency } from './lib/utils';
+import { PendingBills } from './components/PendingBills';
 
 export default function AssetsView({ user }: { user: User }) {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -64,6 +65,8 @@ export default function AssetsView({ user }: { user: User }) {
         <h1 className="text-2xl font-black text-white">Device & Warranty Vault</h1>
         <p className="text-xs text-text-muted font-bold uppercase tracking-widest">Durable goods tracking</p>
       </header>
+
+      <PendingBills user={user} baseCurrency="EUR" />
 
       <div className="grid gap-4">
         {assets.length > 0 ? assets.map(asset => {
