@@ -230,8 +230,6 @@ export default function SettingsView({
         
         <GmailSyncView 
           user={user} 
-          baseCurrency={baseCurrency} 
-          onProcessComplete={onProcessComplete} 
         />
       </section>
 

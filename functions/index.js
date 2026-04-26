@@ -37,13 +37,19 @@ async function analyzeMessage(message, ai) {
   const prompt = `Analyze this user message for Aura financial bot. 
   Today's date is ${today}.
 
-  Determine if the user wants to:
-  1. Add an expense: return JSON { "type": "expense", "data": { "description": string, "amount": number, "category": string, "date": string (YYYY-MM-DD) } }. 
-     Supported categories: [${CATEGORIES.join(', ')}]. 
-     If the user says "today", use ${today}. If they say "yesterday", calculate the date.
-  2. Add a split expense with someone: return JSON { "type": "split_expense", "data": { "description": string, "amount": number, "category": string, "date": string (YYYY-MM-DD), "splitWith": string } }.
-  3. Ask a question about spending/finances: return JSON { "type": "spending_query", "data": { "question": string } }.
-  4. Ask a question about pantry stock, inventory, or what's in the fridge: return JSON { "type": "stock_query", "data": { "question": string } }.
+  INTENT CLASSIFICATION RULES:
+  1. Add an expense: If the user provides an amount and description. 
+     - Handle European formats: "17,75" should be interpreted as 17.75.
+     - Return JSON: { "type": "expense", "data": { "description": string, "amount": number, "category": string, "date": string (YYYY-MM-DD) } }.
+     - Categories: [${CATEGORIES.join(', ')}].
+  2. Add a split expense: If the user mentions "split with [name]" or similar.
+     - Return JSON: { "type": "split_expense", "data": { "description": string, "amount": number, "category": string, "date": string (YYYY-MM-DD), "splitWith": string } }.
+  3. Spending Query: ONLY if the user asks a specific QUESTION about their spending patterns, history, or totals (e.g., "How much did I spend on food?"). 
+     - Return JSON: { "type": "spending_query", "data": { "question": string } }.
+  4. Stock Query: If the user asks about what they have in stock, pantry, or fridge.
+     - Return JSON: { "type": "stock_query", "data": { "question": string } }.
+  
+  CRITICAL: If the message starts with "Add" or mentions a price, it is ALMOST ALWAYS an expense (#1), NOT a query (#3).
   Return ONLY valid JSON.`;
   
   const response = await ai.models.generateContent({ model: "gemini-flash-latest", contents: prompt });
@@ -516,21 +522,16 @@ const ALL_SECRETS = [
 ];
 
 export const gigiBot = onRequest({ secrets: ALL_SECRETS, timeoutSeconds: 120 }, async (req, res) => {
-  logger.info("📥 GigiBot Request Received", { body: req.body });
+  res.status(200).send("OK"); // Respond immediately to prevent Telegram retries
   try {
-    if (req.method === "POST") {
-      if (req.body?.message) {
-        logger.info("💬 Message found in body, processing...");
-        await processBotUpdate(req.body.message);
-      } else if (req.body?.callback_query) {
-        logger.info("🔘 Callback query found in body, processing...");
-        await handleCallbackQuery(req.body.callback_query);
-      }
+    if (req.body.message) {
+      await processBotUpdate(req.body.message);
+    } else if (req.body.callback_query) {
+      await handleCallbackQuery(req.body.callback_query);
     }
   } catch (e) {
     logger.error("❌ gigiBot top-level error", e);
   }
-  res.sendStatus(200);
 });
 
 export const dailyChef = onSchedule({ schedule: "00 11 * * *", secrets: ALL_SECRETS, timeoutSeconds: 120, timeZone: "Europe/Amsterdam" }, async (event) => {
@@ -539,7 +540,7 @@ export const dailyChef = onSchedule({ schedule: "00 11 * * *", secrets: ALL_SECR
 
 // --- Autonomous Accountant ---
 
-export const connectGmail = onRequest({ secrets: ALL_SECRETS }, async (req, res) => {
+export const connectGmail = onRequest({ secrets: ALL_SECRETS, cors: true }, async (req, res) => {
   const type = req.query.type || 'dj'; // Default to 'dj' for legacy compatibility
   const oauth2Client = getOAuthClient();
   
@@ -576,82 +577,197 @@ export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, re
     
     // Positive Framing: Confirm exactly which account type was linked
     const readableType = type === 'dj' ? 'Business' : type.charAt(0).toUpperCase() + type.slice(1);
-    res.send(`🚀 ${readableType} Gmail Connected Successfully! GigiBot will now start scanning for ${readableType.toLowerCase()} invoices.`);
+    const appUrl = "https://smart-tracker-gigi.web.app";
+    
+    res.send(`
+      <html>
+        <body style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #0a0a0a; color: white; text-align: center;">
+          <div style="background: #1a1a1a; padding: 40px; border-radius: 32px; border: 1px solid #333; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
+            <div style="font-size: 50px; margin-bottom: 20px;">🚀</div>
+            <h1 style="margin: 0 0 10px; font-weight: 900; letter-spacing: -1px;">${readableType} Gmail Connected!</h1>
+            <p style="color: #888; font-size: 14px; margin-bottom: 30px;">GigiBot will now start scanning for ${readableType.toLowerCase()} invoices.</p>
+            <a href="${appUrl}/settings" style="display: inline-block; background: #10b981; color: black; padding: 15px 30px; border-radius: 16px; text-decoration: none; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; font-size: 12px; transition: transform 0.2s;">Return to App</a>
+          </div>
+        </body>
+      </html>
+    `);
   } catch (error) {
     logger.error("OAuth Callback Error:", error);
     res.status(500).send("Authentication failed. Please try again or check server logs.");
   }
 });
 
-export const syncBusinessInvoices = onSchedule({ schedule: "every 6 hours", secrets: ALL_SECRETS, timeoutSeconds: 300 }, async (event) => {
+async function runSyncCore(type, days = 1, shouldNotify = false, ignoreProcessed = false) {
   const APP_USER_UID = getAppUserUid();
-  const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc('gmail_dj').get();
+  const docName = type === 'business' ? 'gmail_business' : 'gmail_personal';
+  const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc(docName).get();
   
-  if (!connSnap.exists) return;
+  if (!connSnap.exists) {
+    logger.info(`⚠️ ${docName} connection not found for sync.`);
+    return { success: false, error: "Connection missing" };
+  }
+  
   const { tokens } = connSnap.data();
-  
   const oauth2Client = getOAuthClient();
   oauth2Client.setCredentials(tokens);
   
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  
+  // Calculate date filter
+  const afterDate = Math.floor(Date.now() / 1000) - (days * 24 * 60 * 60);
+  const dateQuery = `after:${afterDate}`;
+  
+  const query = type === 'business' 
+    ? `${dateQuery} has:attachment filename:pdf (factuur OR invoice OR receipt) -category:social -category:promotions`
+    : `${dateQuery} (Netflix OR Spotify OR Uber OR Utilities OR receipt OR "order confirmation" OR bestelling OR bevestiging OR "uw betaling" OR factuur OR rekening OR Vattenfall OR Odido OR Ziggo OR KPN OR T-Mobile)`;
+
+  logger.info(`🔍 Starting ${type} sync with query: ${query}`);
+  
   const res = await gmail.users.messages.list({
     userId: 'me',
-    q: 'has:attachment filename:pdf (factuur OR invoice OR receipt) -category:social -category:promotions',
-    maxResults: 5
+    q: query,
+    maxResults: type === 'business' ? 10 : 30 // Increased limit for better manual scan results
   });
 
-  if (!res.data.messages) return;
+  if (!res.data.messages) return { success: true, count: 0 };
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const bot = getBot();
   const chatId = process.env.TELEGRAM_USER_ID;
+  let processedCount = 0;
 
   for (const msg of res.data.messages) {
     const msgId = msg.id;
-    // Check if we already processed this
-    const processedSnap = await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).get();
-    if (processedSnap.exists) continue;
+    if (!ignoreProcessed) {
+      const processedSnap = await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).get();
+      if (processedSnap.exists) continue;
+    }
 
-    const fullMsg = await gmail.users.messages.get({ userId: 'me', id: msgId });
-    const snippet = fullMsg.data.snippet;
-    
-    // Simple extraction prompt
-    const prompt = `Extract business expense data from this invoice snippet: "${snippet}". 
-    Target fields: merchant, amount (EUR), date (YYYY-MM-DD), category (Music Sales, Bandcamp (Music), Gear & Equipment, Software & Subs, Travel (Prof.), Other).
-    Return ONLY JSON: { "description": string, "amount": number, "date": string, "category": string, "vatAmount": number, "vatRate": number }`;
-    
     try {
-      const result = await ai.models.generateContent({ model: "gemini-flash-latest", contents: prompt });
-      const txData = JSON.parse(result.text.replace(/```json/g, "").replace(/```/g, ""));
+      const fullMsg = await gmail.users.messages.get({ userId: 'me', id: msgId });
       
-      // Save to pendingTransactions to avoid Telegram's 64-byte callback_data limit
-      const pendingRef = await db.collection('pendingTransactions').add({
-        ...txData,
-        uid: APP_USER_UID,
-        status: 'pending',
-        source: 'gmail_sync',
-        createdAt: new Date().toISOString()
-      });
+      // Helper to extract body text from parts, prioritizing plain text but falling back to HTML
+      const getBody = (payload) => {
+        let textBody = "";
+        let htmlBody = "";
+        
+        const processPart = (part) => {
+          if (part.mimeType === 'text/plain' && part.body && part.body.data) {
+            textBody += Buffer.from(part.body.data, 'base64').toString();
+          } else if (part.mimeType === 'text/html' && part.body && part.body.data) {
+            htmlBody += Buffer.from(part.body.data, 'base64').toString();
+          } else if (part.parts) {
+            part.parts.forEach(processPart);
+          }
+        };
+        if (payload.body && payload.body.data) {
+          const data = Buffer.from(payload.body.data, 'base64').toString();
+          if (payload.mimeType === 'text/plain') textBody = data;
+          else if (payload.mimeType === 'text/html') htmlBody = data;
+        } else if (payload.parts) payload.parts.forEach(processPart);
+        return textBody || htmlBody;
+      };
 
-      // Notify via GigiBot
-      await bot.sendMessage(chatId, `🧾 *New Invoice Detected!*\n\n🏢 *Merchant:* ${txData.description}\n💰 *Amount:* €${txData.amount}\n📅 *Date:* ${txData.date}\n📂 *Category:* ${txData.category}\n\nShould I add this to your business expenses?`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "✅ Approve", callback_data: JSON.stringify({ a: 'atx', id: pendingRef.id }) },
-            { text: "❌ Reject", callback_data: JSON.stringify({ a: 'rtx', id: pendingRef.id }) }
-          ]]
+      // Extract PDF Attachment for Business Invoices
+      let pdfBase64 = null;
+      if (type === 'business' && fullMsg.data.payload.parts) {
+        const pdfPart = fullMsg.data.payload.parts.find(p => p.mimeType === 'application/pdf');
+        if (pdfPart && pdfPart.body.attachmentId) {
+          const attachment = await gmail.users.messages.attachments.get({
+            userId: 'me',
+            messageId: msgId,
+            id: pdfPart.body.attachmentId
+          });
+          pdfBase64 = attachment.data.data;
         }
-      });
+      }
 
-      // Mark as processed so we don't scan this email again
+      const bodyText = getBody(fullMsg.data.payload) || fullMsg.data.snippet;
+      const context = bodyText.substring(0, 5000);
+      
+      const genModel = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const promptParts = [];
+      
+      if (type === 'business') {
+        promptParts.push({ text: `Analyze this business invoice. 
+        Email Context: ${context}
+        
+        TASK: Extract merchant, total amount (numeric), date (YYYY-MM-DD), and category.
+        Categories: [Music Sales, Bandcamp (Music), Gear & Equipment, Software & Subs, Travel (Prof.), Other].
+        Return ONLY valid JSON: { "description": string, "amount": number, "date": string, "category": string, "vatAmount": number, "vatRate": number }` });
+        
+        if (pdfBase64) {
+          promptParts.push({ inlineData: { mimeType: 'application/pdf', data: pdfBase64 } });
+        }
+      } else {
+        promptParts.push({ text: `Extract personal expense data from this email.
+        Context: ${context}
+        Categories: [Food & Dining, Transport, Shopping, Entertainment, Bills & Utilities, Other].
+        Return ONLY valid JSON: { "description": string, "amount": number, "date": string, "category": string }` });
+      }
+
+      const result = await genModel.generateContent({ contents: [{ role: "user", parts: promptParts }] });
+      const cleanJson = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+      const txData = JSON.parse(cleanJson);
+      
+      if (type === 'business') {
+        const pendingRef = await db.collection('pendingTransactions').add({
+          description: txData.description || 'Unknown Merchant',
+          amount: Number(txData.amount) || 0,
+          date: validateTransactionDate(txData.date),
+          category: txData.category || 'Other',
+          uid: APP_USER_UID,
+          status: 'pending',
+          source: 'gmail_sync',
+          createdAt: new Date().toISOString()
+        });
+
+        if (shouldNotify && chatId) {
+          await bot.sendMessage(chatId, `🧾 *New Invoice Detected!*\n\n🏢 *Merchant:* ${txData.description || 'Unknown'}\n💰 *Amount:* €${txData.amount || 0}\n📅 *Date:* ${txData.date || 'Unknown'}\n📂 *Category:* ${txData.category || 'Other'}\n\nShould I add this to your business expenses?`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "✅ Approve", callback_data: JSON.stringify({ a: 'atx', id: pendingRef.id }) },
+                { text: "❌ Reject", callback_data: JSON.stringify({ a: 'rtx', id: pendingRef.id }) }
+              ]]
+            }
+          });
+        }
+      } else {
+        await db.collection(`users/${APP_USER_UID}/pendingBills`).add({
+          description: txData.description || 'Unknown Bill',
+          amount: Number(txData.amount) || 0,
+          date: validateTransactionDate(txData.date),
+          category: txData.category || 'Other',
+          source: 'gmail_personal_sync',
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        });
+      }
+
       await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).set({
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toISOString(),
+        syncSource: docName
       });
+      processedCount++;
     } catch (err) {
-      console.error("Gemini/Bot extraction error:", err);
+      logger.error(`❌ Error processing ${type} message ${msgId}:`, err);
     }
   }
+  
+  return { success: true, count: processedCount };
+}
+
+export const manualSync = onRequest({ secrets: ALL_SECRETS, cors: true, timeoutSeconds: 300 }, async (req, res) => {
+  const { type, days } = req.query;
+  if (!type) return res.status(400).send("Missing type (personal or business)");
+  
+  const result = await runSyncCore(type, parseInt(days) || 30, false, true); // No bot spam, bypass processed check for manual scans
+  res.json(result);
+});
+
+export const syncBusinessInvoices = onSchedule({ schedule: "every 6 hours", secrets: ALL_SECRETS, timeoutSeconds: 300 }, async (event) => {
+  await runSyncCore('business', 1, true); // Notify for scheduled syncs
 });
 
 export const syncPersonalBills = onSchedule({ 
@@ -659,68 +775,6 @@ export const syncPersonalBills = onSchedule({
   secrets: ALL_SECRETS, 
   timeoutSeconds: 300 
 }, async (event) => {
-  const APP_USER_UID = getAppUserUid();
-  const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc('gmail_personal').get();
-  
-  if (!connSnap.exists) {
-    logger.info("⚠️ gmail_personal connection not found for sync.");
-    return;
-  }
-  
-  const { tokens } = connSnap.data();
-  const oauth2Client = getOAuthClient();
-  oauth2Client.setCredentials(tokens);
-  
-  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-  const res = await gmail.users.messages.list({
-    userId: 'me',
-    q: '(Netflix OR Spotify OR Uber OR Utilities OR receipt OR "order confirmation") -category:social -category:promotions',
-    maxResults: 10
-  });
-
-  if (!res.data.messages) return;
-
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-  for (const msg of res.data.messages) {
-    const msgId = msg.id;
-    // Check if we already processed this
-    const processedSnap = await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).get();
-    if (processedSnap.exists) continue;
-
-    try {
-      const fullMsg = await gmail.users.messages.get({ userId: 'me', id: msgId });
-      const snippet = fullMsg.data.snippet;
-      
-      const prompt = `Extract personal expense data from this email snippet: "${snippet}". 
-      IMPORTANT: Exclude any invoices related to Music Sales, DJ Gigs, Gear & Equipment, or Business software. We only want personal B2C expenses.
-      Available categories: [Food & Dining, Transport, Shopping, Entertainment, Bills & Utilities, Other].
-      Return ONLY JSON: { "description": string, "amount": number, "date": string, "category": string }`;
-      
-      const result = await ai.models.generateContent({ model: "gemini-flash-latest", contents: prompt });
-      const cleanJson = result.text.replace(/```json/g, "").replace(/```/g, "").trim();
-      const txData = JSON.parse(cleanJson);
-      
-      // Save to staging collection: users/${APP_USER_UID}/pendingBills
-      await db.collection(`users/${APP_USER_UID}/pendingBills`).add({
-        description: txData.description,
-        amount: txData.amount,
-        date: txData.date,
-        category: txData.category,
-        source: 'gmail_personal_sync',
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
-
-      // Mark as processed
-      await db.collection(`users/${APP_USER_UID}/processedEmails`).doc(msgId).set({
-        processedAt: new Date().toISOString(),
-        syncSource: 'gmail_personal'
-      });
-      
-      logger.info(`✅ Successfully staged personal bill: ${txData.description} (€${txData.amount})`);
-    } catch (err) {
-      logger.error(`❌ Error processing personal bill message ${msgId}:`, err);
-    }
-  }
+  await runSyncCore('personal', 1, false);
 });
+

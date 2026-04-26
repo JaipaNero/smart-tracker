@@ -120,8 +120,8 @@ export const PendingBills: React.FC<PendingBillsProps> = ({ user, baseCurrency }
               </div>
 
               <div className="p-4 space-y-4">
-                <div className="flex justify-between items-start">
-                  <div className="space-y-1">
+                <div className="flex justify-between items-start gap-4">
+                  <div className="space-y-1 min-w-0 flex-1">
                     <p className="text-[10px] font-black text-accent-green uppercase tracking-widest flex items-center gap-1.5">
                       <ReceiptText size={10} />
                       {bill.category}
@@ -129,14 +129,25 @@ export const PendingBills: React.FC<PendingBillsProps> = ({ user, baseCurrency }
                     <h4 className="font-black text-white text-sm truncate uppercase tracking-tight">
                       {bill.description}
                     </h4>
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                      {(() => {
+                        try {
+                          if (!bill.date) return 'Recent';
+                          const d = parseISO(bill.date);
+                          if (isNaN(d.getTime())) return 'Recent';
+                          return format(d, 'MMM dd, yyyy');
+                        } catch (e) {
+                          return 'Recent';
+                        }
+                      })()}
+                    </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-black text-lg text-white leading-none">
-                      {formatCurrency(bill.amount, bill.currency || baseCurrency)}
-                    </p>
-                    <p className="text-[8px] font-bold text-text-muted uppercase mt-1">
-                      {bill.date ? format(parseISO(bill.date), 'MMM dd') : 'Recent'}
-                    </p>
+                  <div className="text-right shrink-0">
+                    <div className="bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                      <p className="font-black text-base text-white leading-none">
+                        {formatCurrency(bill.amount, bill.currency || baseCurrency)}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
