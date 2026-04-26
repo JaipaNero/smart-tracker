@@ -81,25 +81,27 @@ const SummaryStats = ({ items }: { items: PantryItem[] }) => {
   }, [items]);
 
   return (
-    <div className="grid grid-cols-2 gap-3 px-0">
-      <div className="bg-bg-card p-4 rounded-2xl border border-border-dark shadow-sm">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-4 h-4 rounded-full bg-accent-soft flex items-center justify-center">
-             <div className="w-2 h-2 bg-accent-green rounded-full" />
+    <div className="grid grid-cols-2 gap-4 px-0">
+      <div className="bg-bg-card p-6 rounded-[32px] border border-border-dark shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-16 h-16 bg-accent-green/5 blur-2xl rounded-full -mr-8 -mt-8 group-hover:bg-accent-green/10 transition-all duration-700" />
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-4 h-4 rounded-full bg-accent-green/20 flex items-center justify-center">
+             <div className="w-1.5 h-1.5 bg-accent-green rounded-full" />
           </div>
-          <span className="text-[9px] font-black uppercase tracking-[0.15em] text-text-muted">Freshness</span>
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-text-muted">Freshness</span>
         </div>
-        <div className="text-3xl font-black text-white leading-tight">{stats.freshPercentage}%</div>
+        <div className="text-4xl font-black text-white leading-tight tracking-tighter">{stats.freshPercentage}%</div>
       </div>
 
-      <div className="bg-bg-card p-4 rounded-2xl border border-border-dark shadow-sm">
-        <div className="flex items-center gap-2 mb-2">
+      <div className="bg-bg-card p-6 rounded-[32px] border border-border-dark shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-16 h-16 bg-red-500/5 blur-2xl rounded-full -mr-8 -mt-8 group-hover:bg-red-500/10 transition-all duration-700" />
+        <div className="flex items-center gap-2 mb-4">
           <div className="w-4 h-4 rounded-full bg-red-500/10 flex items-center justify-center">
-            <AlertCircle size={8} className="text-red-500" />
+            <AlertCircle size={10} className="text-red-500" />
           </div>
-          <span className="text-[9px] font-black uppercase tracking-[0.15em] text-text-muted">Expiring</span>
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-text-muted">Expiring</span>
         </div>
-        <div className="text-3xl font-black text-white leading-tight">{stats.expiringCount}</div>
+        <div className="text-4xl font-black text-white leading-tight tracking-tighter">{stats.expiringCount}</div>
       </div>
     </div>
   );

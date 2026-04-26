@@ -59,7 +59,7 @@ import {
   LineChart,
   Line
 } from 'recharts';
-import { format, parseISO, formatDistanceToNow } from 'date-fns';
+import { format, parseISO, formatDistanceToNow, endOfMonth, startOfMonth, subMonths, eachMonthOfInterval, isWithinInterval } from 'date-fns';
 import { GoogleGenAI, Type } from '@google/genai';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'motion/react';
@@ -69,18 +69,17 @@ import { auth, db, signInWithPopup, googleProvider, signOut, doc, writeBatch, ad
 import PantryView from './PantryView';
 import AssetsView from './AssetsView';
 import { MealGenerator } from './components/MealGenerator';
-import { HouseholdManager } from './components/HouseholdManager';
 import { ReceiptSpectrumBar } from './components/ReceiptSpectrumBar';
 import { categorizeNutrition, loadNutritionOverrides, categorizeItem } from './services/nutritionService';
 import { PantryItem, NutritionTag, DebtRecord } from './types';
 import { ReceiptSplitter } from './components/ReceiptSplitter';
 import { addSplitReceiptItem } from './services/ledgerService';
 import DealsView from './DealsView';
-import GmailSyncView from './GmailSyncView';
-import { SettlementsView } from './SettlementsView';
 import { AIAssistant } from './components/AIAssistant';
 import BusinessView from './BusinessView';
 import { PendingBills } from './components/PendingBills';
+import SettingsView from './views/SettingsView';
+import SharedSpaceView from './views/SharedSpaceView';
 import { RECEIPT_SCAN_PROMPT, validateTransactionDate } from './lib/constants';
 import { useAuth } from './hooks/useAuth';
 import { useLedger } from './hooks/useLedger';
@@ -217,7 +216,7 @@ export default function App() {
   const { pantryItems, shoppingList, setPantryItems, setShoppingList } = useInventory(user);
 
   // --- UI State ---
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'expenses' | 'items' | 'pantry' | 'assets' | 'meals' | 'reports' | 'settings' | 'household' | 'deals' | 'inbox' | 'business' | 'shopping' | 'settlements'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'expenses' | 'items' | 'pantry' | 'assets' | 'meals' | 'reports' | 'settings' | 'hub' | 'deals' | 'business' | 'shopping'>('dashboard');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -815,9 +814,6 @@ export default function App() {
         </AnimatePresence>
 
         {/* --- Tab Content --- */}
-        {activeTab === 'settlements' && (
-          <SettlementsView debts={debts} currentUserId={user?.uid || ''} currency={baseCurrency} />
-        )}
         {activeTab === 'dashboard' && (
           <Dashboard 
             user={user!}
@@ -869,21 +865,13 @@ export default function App() {
         {activeTab === 'meals' && (
           <MealGenerator pantryItems={pantryItems} />
         )}
-        {activeTab === 'inbox' && user && (
-          <GmailSyncView 
-            user={user} 
-            baseCurrency={baseCurrency} 
-            onProcessComplete={(data) => {
-               setScannedReceiptData(data);
-               setShowAddForm(true);
-            }} 
-          />
-        )}
-        {activeTab === 'household' && user && (
-          <HouseholdManager 
-            user={user} 
-            activeHouseholdId={householdId} 
-            onSelectHousehold={setHouseholdId} 
+        {activeTab === 'hub' && user && (
+          <SharedSpaceView 
+            user={user}
+            activeHouseholdId={householdId}
+            onSelectHousehold={setHouseholdId}
+            debts={debts}
+            baseCurrency={baseCurrency}
           />
         )}
         {activeTab === 'reports' && (
@@ -896,20 +884,37 @@ export default function App() {
           <ShoppingListView shoppingList={shoppingList} userId={user?.uid!} />
         )}
         {activeTab === 'settings' && (
-          <SettingsPage 
-            user={user}
-            budgets={budgets} 
-            setBudgets={updateBudgets} 
-            baseCurrency={baseCurrency} 
-            setBaseCurrency={updateBaseCurrency}
+          <SettingsView 
+            user={user!}
+            baseCurrency={baseCurrency}
             spendingCap={spendingCap}
-            setSpendingCap={updateSpendingCap}
+            budgets={budgets}
             geminiKey={geminiKey}
-            setGeminiKey={setGeminiKey}
-            tokens={googleTokens}
-            onLogout={() => {
-               localStorage.removeItem('google_tokens');
-               setGoogleTokens(null);
+            onUpdateCurrency={updateBaseCurrency}
+            onUpdateSpendingCap={updateSpendingCap}
+            onUpdateGeminiKey={setGeminiKey}
+            onWipeData={async () => {
+              // Simple wipe call - the actual logic is in SettingsPage but we can inline it or move it
+              // For now, I'll move the core logic here
+              const uid = user!.uid;
+              const collections = ['expenses', 'budgets', 'priceHistory', 'shoppingList', 'assets', 'userCategorizationOverrides'];
+              for (const col of collections) {
+                const q = query(collection(db, `users/${uid}/${col}`));
+                const snap = await getDocs(q);
+                const batch = writeBatch(db);
+                snap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+                await batch.commit();
+              }
+              const pq = query(collection(db, 'pantryItems'), where('ownerId', '==', uid));
+              const pSnap = await getDocs(pq);
+              const pBatch = writeBatch(db);
+              pSnap.docs.forEach(pDoc => pBatch.delete(pDoc.ref));
+              await pBatch.commit();
+              setStatusMessage({ type: 'success', text: 'All data wiped successfully.' });
+            }}
+            onProcessComplete={(data) => {
+              setScannedReceiptData(data);
+              setShowAddForm(true);
             }}
           />
         )}
@@ -953,15 +958,13 @@ export default function App() {
           >
             <div className="grid grid-cols-2 gap-4">
                <MenuOption active={activeTab === 'shopping'} onClick={() => { setActiveTab('shopping'); setIsMenuOpen(false); }} icon={<ShoppingCart />} label="Shopping List" sub="Restock items" />
-               <MenuOption active={activeTab === 'inbox'} onClick={() => { setActiveTab('inbox'); setIsMenuOpen(false); }} icon={<Mail />} label="Gmail Sync" sub="Fetch receipts" />
                <MenuOption active={activeTab === 'deals'} onClick={() => { setActiveTab('deals'); setIsMenuOpen(false); }} icon={<Tag />} label="Deals" sub="Agent scouting" />
-               <MenuOption active={activeTab === 'household'} onClick={() => { setActiveTab('household'); setIsMenuOpen(false); }} icon={<Users />} label="Space" sub="Roomies" />
+               <MenuOption active={activeTab === 'hub'} onClick={() => { setActiveTab('hub'); setIsMenuOpen(false); }} icon={<Users />} label="Shared Space" sub="Hub" />
                <MenuOption active={activeTab === 'assets'} onClick={() => { setActiveTab('assets'); setIsMenuOpen(false); }} icon={<Package />} label="Assets" sub="Equipment" />
-               <MenuOption active={activeTab === 'settlements'} onClick={() => { setActiveTab('settlements'); setIsMenuOpen(false); }} icon={<DollarSign />} label="Settlements" sub="Who owes what" />
                <MenuOption active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMenuOpen(false); }} icon={<PieChart />} label="Reports" sub="Insights" />
                <MenuOption active={activeTab === 'business'} onClick={() => { setActiveTab('business'); setIsMenuOpen(false); }} icon={<Briefcase />} label="Business" sub="Professional" />
                <MenuOption active={activeTab === 'items'} onClick={() => { setActiveTab('items'); setIsMenuOpen(false); }} icon={<LayoutGrid />} label="Database" sub="Price history" />
-               <MenuOption active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsMenuOpen(false); }} icon={<Settings />} label="Setup" sub="Cloud & Auth" />
+               <MenuOption active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsMenuOpen(false); }} icon={<Settings />} label="Settings Hub" sub="Cloud & Apps" />
             </div>
             <p className="mt-auto text-center text-[10px] font-black uppercase tracking-[0.5em] text-text-muted opacity-50 pb-20">SpendSmart Pro Elite</p>
           </motion.div>
@@ -1095,36 +1098,39 @@ function Dashboard({
       <PendingBills user={user} baseCurrency={baseCurrency} />
 
       {/* Monthly Summary Card */}
-      <div className="bg-bg-card p-6 rounded-2xl border border-border-dark shadow-xl relative overflow-hidden">
-        <p className="text-text-muted text-[11px] font-bold uppercase tracking-widest mb-2">Monthly Spending</p>
-        <h2 className="text-[42px] font-black leading-none mb-6">
+      <div className="bg-bg-card p-8 rounded-[32px] border border-border-dark shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-accent-green/5 blur-3xl rounded-full -mr-16 -mt-16 group-hover:bg-accent-green/10 transition-all duration-700" />
+        <p className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mb-3">Monthly Spending</p>
+        <h2 className="text-5xl font-black leading-none mb-8 tracking-tighter text-white">
           {formatCurrency(totalSpent, baseCurrency)}
         </h2>
-        <div className="h-2 bg-white/5 rounded-full mb-3 overflow-hidden">
+        <div className="h-2.5 bg-white/5 rounded-full mb-4 overflow-hidden p-[1px]">
           <motion.div 
             initial={{ width: 0 }}
             animate={{ width: `${percentage}%` }}
             className={cn(
-              "h-full shadow-[0_0_12px_rgba(46,204,113,0.3)]",
-              percentage >= 100 ? "bg-red-500 shadow-red-500/30" : percentage >= 80 ? "bg-orange-500 shadow-orange-500/30" : "bg-accent-green"
+              "h-full rounded-full transition-all duration-1000",
+              percentage >= 100 ? "bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.4)]" : 
+              percentage >= 80 ? "bg-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.4)]" : 
+              "bg-accent-green shadow-[0_0_20px_rgba(46,204,113,0.4)]"
             )} 
           />
         </div>
-        <div className="flex justify-between text-[11px] font-bold text-text-muted">
-          <span>Target: {formatCurrency(spendingCap, baseCurrency)}</span>
+        <div className="flex justify-between text-[10px] font-black uppercase tracking-widest">
+          <span className="text-text-muted">Cap: {formatCurrency(spendingCap, baseCurrency)}</span>
           <span className={cn(
              percentage >= 100 ? "text-red-500" : percentage >= 80 ? "text-orange-500" : "text-accent-green"
-          )}>{percentage}% USED</span>
+          )}>{percentage}% UTILIZED</span>
         </div>
       </div>
 
       {/* Feature 2: Mindful Spending Index Widget */}
-      <div className="bg-bg-card p-6 rounded-2xl border border-border-dark overflow-hidden relative">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xs font-black uppercase tracking-widest text-text-muted">Mindful Spending Index</h3>
+      <div className="bg-bg-card p-8 rounded-[32px] border border-border-dark overflow-hidden relative">
+        <div className="flex justify-between items-center mb-8">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Mindful Spending Index</h3>
           {mindfulnessStats && (
-            <div className="px-2 py-0.5 rounded-full bg-accent-soft border border-accent-green/20 text-[10px] font-black text-accent-green">
-              {mindfulnessStats.score}% MINDFUL
+            <div className="px-3 py-1 rounded-full bg-accent-green/10 border border-accent-green/20 text-[9px] font-black text-accent-green uppercase tracking-widest">
+              {mindfulnessStats.score}% SCORE
             </div>
           )}
         </div>
@@ -1170,15 +1176,15 @@ function Dashboard({
       </button>
 
       {/* Reports Overview */}
-      <div className="bg-bg-card p-6 rounded-2xl border border-border-dark">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xs font-black uppercase tracking-widest text-text-muted">Top Allocation</h3>
-          <div className="text-[10px] bg-white/5 px-2 py-1 rounded-lg text-text-muted font-bold">THIS MONTH</div>
+      <div className="bg-bg-card p-8 rounded-[32px] border border-border-dark shadow-2xl">
+        <div className="flex justify-between items-center mb-8">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Top Allocation</h3>
+          <div className="text-[9px] bg-white/5 px-2.5 py-1 rounded-full text-text-muted font-black uppercase tracking-widest border border-white/5">THIS MONTH</div>
         </div>
         {categories.length > 0 ? (
           <div className="space-y-6">
-            <div className="h-48 w-full min-h-[192px] min-w-[200px]">
-              <ResponsiveContainer width="100%" height="100%" minHeight={192} minWidth={200}>
+          <div className="h-48 w-full min-h-[192px] min-w-0 relative">
+              <ResponsiveContainer width="100%" height="100%" minHeight={192} minWidth={200} debounce={1}>
                 <RePieChart>
                   <Pie
                     data={categories}
@@ -1562,8 +1568,8 @@ function Reports({ expenses, baseCurrency }: { expenses: Expense[], baseCurrency
     <div className="space-y-6 pb-4">
       <div className="bg-bg-card p-6 rounded-2xl border border-border-dark shadow-xl">
         <h3 className="text-xs font-black uppercase tracking-widest text-text-muted mb-8">Performance Trend</h3>
-        <div className="h-64 w-full min-h-0 min-w-0">
-          <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
+        <div className="h-64 w-full min-h-[256px] min-w-0 relative">
+          <ResponsiveContainer width="100%" height="100%" minHeight={256} debounce={1}>
             <BarChart data={last6Months}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#222" />
               <XAxis 

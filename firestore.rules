@@ -217,30 +217,9 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidUser(incoming()) && request.auth.uid == userId;
       allow update: if isSignedIn() && request.auth.uid == userId;
       
-      match /userCategorizationOverrides/{overrideId} {
+      // All user-owned subcollections (expenses, budgets, priceHistory, pendingBills, etc.)
+      match /{allSubcollections=**} {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      match /learnedPrompts/{promptId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      match /budgets/{budgetId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      match /expenses/{expenseId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      match /priceHistory/{historyId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      match /shoppingList/{itemId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      match /assets/{assetId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-      }
-      // Gmail DJ connection status
-      match /connections/{connId} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
       }
     }
   }
