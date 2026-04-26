@@ -1,17 +1,10 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import admin from "firebase-admin";
 import { GoogleGenAI } from "@google/genai";
 import TelegramBot from "node-telegram-bot-api";
-import { getFirestore } from "firebase-admin/firestore";
 import { google } from "googleapis";
 import axios from "axios";
-
-admin.initializeApp();
-
-// Use the NAMED Firestore database (not the default)
-const FIRESTORE_DB_ID = "ai-studio-eda4df82-53a4-4400-baa1-4e70d58fe3dc";
-const db = getFirestore(FIRESTORE_DB_ID);
+import { db, APP_USER_UID } from "./firebase-admin-setup.js";
 
 // These are resolved lazily at function invocation time (secrets are injected then)
 function getBot() {
@@ -60,7 +53,6 @@ async function processBotUpdate(msg) {
   const userId = msg.from?.id.toString();
   const text = msg.text || msg.caption;
   const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID;
-  const APP_USER_UID = process.env.APP_USER_UID;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
   if (msg.photo) {
@@ -195,7 +187,6 @@ async function handleCallbackQuery(query) {
   const bot = getBot();
   const chatId = query.message.chat.id;
   const data = JSON.parse(query.data);
-  const APP_USER_UID = process.env.APP_USER_UID || 'WP6m5yh78BQ6Hg5hczKQbJUSx2Q2';
 
   // Support both legacy long-data and new short-ID approvals
   if (data.action === 'approve_tx' || data.a === 'atx') {
@@ -216,13 +207,26 @@ async function handleCallbackQuery(query) {
     }
 
     // Update handleCallbackQuery part
-    await db.collection('businessTransactions').add({
-      ...txData,
-      userId: APP_USER_UID,
-      type: 'expense',
+    const expenseSchema = {
+      date: txData.date,
+      amount: txData.amount,
+      rawTotal: txData.amount, // Required for UI parity
+      splitRatio: 1, 
+      computedCost: txData.amount, 
+      category: txData.category,
+      description: `[Business] ${txData.description}`,
+      currency: 'EUR', // Ensuring metric/standard consistency
+      isRecurring: false,
+      hasItems: false,
+      vatAmount: txData.vatAmount || 0,
+      vatRate: txData.vatRate || 0,
+      source: 'gmail_sync',
       status: 'approved',
       createdAt: new Date().toISOString()
-    });
+    };
+
+    // Write to the Single Source of Truth collection!
+    await db.collection(`users/${APP_USER_UID}/expenses`).add(expenseSchema);
     
     // Update the message to show it was approved
     await bot.editMessageText(`✅ *Approved & Saved!*\n💰 *Amount:* €${txData.amount}\n📂 *Category:* ${txData.category}\n🏢 *Merchant:* ${txData.description}`, {
@@ -249,7 +253,6 @@ async function handleCallbackQuery(query) {
 async function handlePhotoUpdate(msg) {
   const bot = getBot();
   const chatId = msg.chat.id;
-  const APP_USER_UID = process.env.APP_USER_UID;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
   try {
@@ -349,7 +352,6 @@ Return ONLY valid JSON matching this schema:
 
 async function sendDailyRecipeIdea() {
   const bot = getBot();
-  const APP_USER_UID = process.env.APP_USER_UID;
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID;
 
@@ -436,7 +438,6 @@ export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, re
   
   try {
     const { tokens } = await oauth2Client.getToken(code);
-    const APP_USER_UID = 'WP6m5yh78BQ6Hg5hczKQbJUSx2Q2';
     
     // Store the refresh token securely
     console.log(`Saving tokens for UID: ${APP_USER_UID}`);
@@ -453,7 +454,6 @@ export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, re
 });
 
 export const syncBusinessInvoices = onSchedule({ schedule: "every 6 hours", secrets: ALL_SECRETS, timeoutSeconds: 300 }, async (event) => {
-  const APP_USER_UID = process.env.APP_USER_UID || 'WP6m5yh78BQ6Hg5hczKQbJUSx2Q2';
   const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc('gmail_dj').get();
   
   if (!connSnap.exists) return;

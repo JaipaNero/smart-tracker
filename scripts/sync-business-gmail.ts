@@ -1,19 +1,10 @@
-import "dotenv/config";
 import { google } from "googleapis";
 import { GoogleGenAI } from "@google/genai";
-import admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
 import path from "path";
 
-// Initialize Firebase
-const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || "./service-account.json";
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert(JSON.parse(fs.readFileSync(serviceAccountPath, "utf8")))
-    });
-}
-const db = getFirestore();
+// @ts-ignore - Importing from JS file in TS script
+import { db, APP_USER_UID } from "../functions/firebase-admin-setup.js";
 
 async function syncBusinessGmail() {
     console.log("🚀 Starting Deep Business Gmail Sync...");
@@ -94,11 +85,9 @@ async function syncBusinessGmail() {
 
             if (analysis.isBusiness && analysis.data) {
                 const tx = analysis.data;
-                const firebaseUid = process.env.FIREBASE_USER_ID;
-                
                 await db.collection("businessTransactions").add({
                     ...tx,
-                    userId: firebaseUid,
+                    userId: APP_USER_UID,
                     vatAmount: tx.amount - (tx.amount / (1 + (tx.vatRate / 100))),
                     source: "gmail_sync",
                     gmailId: msg.id,

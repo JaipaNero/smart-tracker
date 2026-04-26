@@ -1,23 +1,12 @@
-import admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
 import fs from 'fs';
 import { parse } from 'csv-parse/sync';
 import path from 'path';
 
-// --- CONFIG ---
-const SERVICE_ACCOUNT_PATH = './service-account.json';
-const CSV_PATH = './expenses.csv';
-const DB_ID = 'ai-studio-eda4df82-53a4-4400-baa1-4e70d58fe3dc';
-const USER_ID = 'WP6m5yh78BQ6Hg5hczKQbJUSx2Q2'; // Your UID verified earlier
+// @ts-ignore - Importing from JS file in TS script
+import { db, APP_USER_UID } from "../functions/firebase-admin-setup.js";
 
-// --- AUTH ---
-const serviceAccount = JSON.parse(fs.readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-}
-const db = getFirestore(DB_ID);
+// --- CONFIG ---
+const CSV_PATH = './expenses.csv';
 
 // --- HELPERS ---
 function parseCurrency(str: string): number {
@@ -89,7 +78,7 @@ async function importCsv() {
     
     const txData = {
       id: txId,
-      userId: USER_ID,
+      userId: APP_USER_UID,
       date: date,
       type: 'expense', // Based on the user request for "Uitgaven"
       amount: finalAmount,

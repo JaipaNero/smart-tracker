@@ -1,11 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import TelegramBot from "node-telegram-bot-api";
-import admin from "firebase-admin";
+import { db, APP_USER_UID } from "../../functions/firebase-admin-setup.js";
 import { Expense } from "../types"; // tsx handles the resolution correctly
-import fs from "fs";
-import path from "path";
-import { getFirestore } from "firebase-admin/firestore";
-import firebaseConfig from "../../firebase-applet-config.json";
 
 // Bot is now cloud-hosted via Firebase Functions (gigiBot).
 // Local polling is disabled to prevent overriding the cloud webhook.
@@ -14,28 +10,7 @@ const bot = process.env.LOCAL_BOT === 'true'
   ? new TelegramBot(process.env.TELEGRAM_BOT_TOKEN!, { polling: true })
   : new TelegramBot(process.env.TELEGRAM_BOT_TOKEN!);
 
-// Initialize Firebase Admin SDK
-if (!admin.apps.length) {
-  try {
-    const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || "./service-account.json";
-    const resolvedPath = path.resolve(serviceAccountPath);
-    
-    if (fs.existsSync(resolvedPath)) {
-      const serviceAccount = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      console.log("Firebase Admin initialized successfully from", resolvedPath);
-    } else {
-      console.warn(`⚠️ Firebase Admin service account not found at ${resolvedPath}. Bot functionality will be limited.`);
-    }
-  } catch (error) {
-    console.error("❌ Failed to initialize Firebase Admin:", error);
-  }
-}
-
-// Only get Firestore if an app was initialized
-const db = admin.apps.length ? getFirestore(admin.apps[0], firebaseConfig.firestoreDatabaseId) : null;
+// Database initialized via unified setup
 
 // Helper to analyze message
 async function analyzeMessage(message: string, ai: GoogleGenAI) {
@@ -94,16 +69,11 @@ bot.on('message', async (msg) => {
     if (!apiKey) throw new Error("GEMINI_API_KEY missing");
     
     if (!db) {
-      await bot.sendMessage(chatId, "⚠️ Server Error: Firebase Database is not initialized. Check service-account.json.");
+      await bot.sendMessage(chatId, "⚠️ Server Error: Firebase Database is not initialized.");
       return;
     }
 
-    // Ensure FIREBASE_USER_ID is set
-    const firebaseUid = process.env.FIREBASE_USER_ID;
-    if (!firebaseUid) {
-      await bot.sendMessage(chatId, "⚠️ Server Error: FIREBASE_USER_ID is not configured in .env");
-      return;
-    }
+    const firebaseUid = APP_USER_UID;
 
     console.log("Analyzing message with apiKey starts with:", apiKey.substring(0, 5));
     const ai = new GoogleGenAI({ apiKey });
@@ -233,7 +203,7 @@ bot.on('message', async (msg) => {
 bot.on('photo', async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from?.id.toString();
-    const firebaseUid = process.env.FIREBASE_USER_ID;
+    const firebaseUid = APP_USER_UID;
     const apiKey = (process.env.CUSTOM_GEMINI_API_KEY || process.env.GEMINI_API_KEY)?.trim();
     
     console.log(`[Bot] Photo received from ${userId}`);
@@ -355,8 +325,7 @@ export async function sendDailyRecipeIdea() {
     if (!apiKey) throw new Error("GEMINI_API_KEY missing");
     const ai = new GoogleGenAI({ apiKey });
     
-    const firebaseUid = process.env.FIREBASE_USER_ID;
-    if (!firebaseUid) throw new Error("FIREBASE_USER_ID missing");
+    const firebaseUid = APP_USER_UID;
 
     if (!db) throw new Error("Database not initialized");
 
