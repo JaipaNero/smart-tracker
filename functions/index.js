@@ -435,7 +435,7 @@ export const dailyChef = onSchedule({ schedule: "59 13 * * *", secrets: ALL_SECR
 // --- Autonomous Accountant ---
 
 export const connectGmail = onRequest({ secrets: ALL_SECRETS }, async (req, res) => {
-  const type = req.query.type || 'business'; // Default to business if not specified
+  const type = req.query.type || 'dj'; // Default to 'dj' for legacy compatibility
   const oauth2Client = getOAuthClient();
   
   const url = oauth2Client.generateAuthUrl({

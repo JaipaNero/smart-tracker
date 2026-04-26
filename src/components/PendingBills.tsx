@@ -51,10 +51,16 @@ export const PendingBills: React.FC<PendingBillsProps> = ({ user, baseCurrency }
       // Source document in pendingBills collection
       const pendingRef = doc(db, `users/${user.uid}/pendingBills`, bill.id);
 
-      // Move data exactly as-is
+      // Map schema for UI Parity - Ensures the ledger renders correctly
       const { id, ...data } = bill;
       batch.set(expenseRef, {
         ...data,
+        rawTotal: data.amount,
+        computedCost: data.amount,
+        splitRatio: 1,
+        currency: bill.currency || baseCurrency,
+        isRecurring: false,
+        hasItems: false,
         approvedAt: new Date().toISOString()
       });
 
