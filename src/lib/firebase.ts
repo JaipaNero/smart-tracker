@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { initializeFirestore, collection, doc, setDoc, updateDoc, getDoc, getDocs, onSnapshot, query, deleteDoc, where, writeBatch, addDoc, arrayUnion, arrayRemove, getDocFromServer, orderBy, limit, increment, or } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -32,5 +33,5 @@ async function testConnection() {
 testConnection();
 
 export { signInWithPopup, signOut, onAuthStateChanged, getDocFromServer };
-export { collection, doc, setDoc, updateDoc, getDoc, getDocs, onSnapshot, query, deleteDoc, where, writeBatch, addDoc, arrayUnion, arrayRemove, orderBy, limit, increment, or };
+export { collection, doc, setDoc, updateDoc, getDoc, getDocs, onSnapshot, query, deleteDoc, where, writeBatch, addDoc, arrayUnion, arrayRemove, orderBy, limit, increment, or, getFunctions, httpsCallable };
 export type { User };

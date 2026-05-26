@@ -199,7 +199,8 @@ export default function BusinessView({ user, baseCurrency }: { user: User, baseC
     'Other': 'bg-gray-500'
   };
 
-  const formatValue = (val: number) => {
+  const formatValue = (val: number | undefined | null) => {
+    if (val === undefined || val === null || isNaN(val)) return '€0.00';
     const symbol = CURRENCIES.find(c => c.code === baseCurrency)?.symbol || '$';
     return `${symbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
@@ -294,7 +295,7 @@ export default function BusinessView({ user, baseCurrency }: { user: User, baseC
                         <div className="text-[10px] text-text-muted font-medium uppercase tracking-tight">{tx.date}</div>
                       </div>
                       <div className="text-xs font-black text-accent-green">
-                        €{tx.amount.toFixed(2)}
+                        €{(tx.amount || 0).toFixed(2)}
                       </div>
                     </div>
                     <div className="flex gap-2 mt-3">

@@ -1,4 +1,4 @@
-import { onRequest } from "firebase-functions/v2/https";
+import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { GoogleGenAI } from "@google/genai";
@@ -597,9 +597,9 @@ export const oauth2callback = onRequest({ secrets: ALL_SECRETS }, async (req, re
   }
 });
 
-async function runSyncCore(type, days = 1, shouldNotify = false, ignoreProcessed = false) {
-  const APP_USER_UID = getAppUserUid();
-  const docName = type === 'business' ? 'gmail_business' : 'gmail_personal';
+async function runSyncCore(type, days = 1, shouldNotify = false, ignoreProcessed = false, providedUid = null) {
+  const APP_USER_UID = providedUid || getAppUserUid();
+  const docName = type === 'business' ? 'gmail_dj' : 'gmail_personal';
   const connSnap = await db.collection(`users/${APP_USER_UID}/connections`).doc(docName).get();
   
   if (!connSnap.exists) {
@@ -618,8 +618,8 @@ async function runSyncCore(type, days = 1, shouldNotify = false, ignoreProcessed
   const dateQuery = `after:${afterDate}`;
   
   const query = type === 'business' 
-    ? `${dateQuery} has:attachment filename:pdf (factuur OR invoice OR receipt) -category:social -category:promotions`
-    : `${dateQuery} (Netflix OR Spotify OR Uber OR Utilities OR receipt OR "order confirmation" OR bestelling OR bevestiging OR "uw betaling" OR factuur OR rekening OR Vattenfall OR Odido OR Ziggo OR KPN OR T-Mobile)`;
+    ? `${dateQuery} has:attachment filename:pdf (factuur OR invoice OR receipt OR rekening OR nota OR betalingsbevestiging OR kwitantie) -category:social -category:promotions`
+    : `${dateQuery} (Netflix OR Spotify OR Uber OR Utilities OR receipt OR invoice OR bill OR statement OR "order confirmation" OR bestelling OR bevestiging OR "uw betaling" OR factuur OR rekening OR nota OR betalingsbevestiging OR afschrijving OR kwitantie OR Vattenfall OR Odido OR Ziggo OR KPN OR T-Mobile)`;
 
   logger.info(`🔍 Starting ${type} sync with query: ${query}`);
   
@@ -758,12 +758,19 @@ async function runSyncCore(type, days = 1, shouldNotify = false, ignoreProcessed
   return { success: true, count: processedCount };
 }
 
-export const manualSync = onRequest({ secrets: ALL_SECRETS, cors: true, timeoutSeconds: 300 }, async (req, res) => {
-  const { type, days } = req.query;
-  if (!type) return res.status(400).send("Missing type (personal or business)");
+export const manualSync = onCall({ secrets: ALL_SECRETS, timeoutSeconds: 300 }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Securely connecting your sync agent... Please log in first.");
+  }
   
-  const result = await runSyncCore(type, parseInt(days) || 30, false, true); // No bot spam, bypass processed check for manual scans
-  res.json(result);
+  const { type, days } = request.data;
+  if (!type) {
+    throw new HttpsError("invalid-argument", "Missing sync type (personal or business)");
+  }
+  
+  logger.info(`🚀 Manual sync requested by user ${request.auth.uid} for type ${type} over ${days} days`);
+  const result = await runSyncCore(type, parseInt(days) || 30, false, true, request.auth.uid);
+  return result;
 });
 
 export const syncBusinessInvoices = onSchedule({ schedule: "every 6 hours", secrets: ALL_SECRETS, timeoutSeconds: 300 }, async (event) => {

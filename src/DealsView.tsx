@@ -136,10 +136,10 @@ export default function DealsView({ allItems }: { allItems: PantryItem[] }) {
 
                     <div className="flex flex-col items-end gap-1">
                       <div className="flex items-center gap-2">
-                        {deal.originalPrice && (
+                        {deal.originalPrice !== undefined && deal.originalPrice !== null && (
                           <span className="text-[10px] text-text-muted line-through">€{deal.originalPrice.toFixed(2)}</span>
                         )}
-                        <span className="text-sm font-black text-white">€{deal.price.toFixed(2)}</span>
+                        <span className="text-sm font-black text-white">€{(deal.price || 0).toFixed(2)}</span>
                       </div>
                       {isSavings ? (
                          <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest text-accent-green bg-accent-soft/30 px-2 py-1 rounded-full border border-accent-green/20">

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Loader2, CheckCircle2, ChevronRight, AlertCircle, ShoppingBag, Calendar, Tag, RefreshCw, Briefcase, User as UserIcon } from 'lucide-react';
 import { cn } from './lib/utils';
-import { User, db, doc, onSnapshot } from './lib/firebase';
+import { User, db, doc, onSnapshot, getFunctions, httpsCallable } from './lib/firebase';
 
 const CONNECT_URL = "https://connectgmail-t7zuw6sfpa-uc.a.run.app";
 
@@ -43,9 +43,11 @@ export default function GmailSyncView({ user }: { user: User, baseCurrency: stri
   const handleSync = async (type: 'business' | 'personal') => {
     setSyncing(type);
     try {
-      const response = await fetch(`https://us-central1-nexus-platform-beta-9283.cloudfunctions.net/manualSync?type=${type}&days=30`);
-      const result = await response.json();
-      alert(`Sync Complete! Found ${result.count} new items.`);
+      const functions = getFunctions();
+      const manualSyncCall = httpsCallable(functions, 'manualSync');
+      const result = await manualSyncCall({ type, days: 30 });
+      const data = result.data as { count: number };
+      alert(`Sync Complete! Found ${data.count} new items.`);
     } catch (err) {
       console.error("Sync failed", err);
       alert("Sync failed. Check console for details.");
